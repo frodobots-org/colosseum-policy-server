@@ -1,0 +1,22 @@
+syntax = "proto3";
+package colosseum.v1;
+// Canonical schema is currently mirrored in each deployable project.
+// Generate with: python -m grpc_tools.protoc -Iproto --python_out=src/colosseum_policy_server proto/colosseum.proto
+enum MessageType { MESSAGE_TYPE_UNSPECIFIED = 0; HELLO = 1; REGISTERED = 2; MATCH_REQUEST = 3; MATCHED = 4; SESSION_READY = 5; OBSERVATION = 6; ACTION_PLAN = 7; RESET = 8; SESSION_CLOSE = 9; ERROR = 10; }
+enum PeerRole { PEER_ROLE_UNSPECIFIED = 0; CLIENT = 1; POLICY_SERVER = 2; }
+enum DataType { DATA_TYPE_UNSPECIFIED = 0; FLOAT32 = 1; FLOAT64 = 2; UINT8 = 3; INT32 = 4; INT64 = 5; }
+enum ImageEncoding { IMAGE_ENCODING_UNSPECIFIED = 0; JPEG = 1; PNG = 2; RAW_RGB = 3; }
+message RelayFrame { uint32 protocol_version = 1; MessageType type = 2; string session_id = 3; uint64 sequence = 4; uint64 sent_at_ns = 5; uint32 deadline_ms = 6; bytes payload = 7; }
+message ActionSpaceSpec { string name = 1; uint32 action_dim = 2; }
+message RobotSpec { string robot_type = 1; uint32 joint_count = 2; bool has_gripper = 3; uint32 control_hz = 4; repeated ActionSpaceSpec action_spaces = 5; }
+message Hello { PeerRole role = 1; string peer_id = 2; string policy_id = 3; RobotSpec robot = 4; }
+message Registered { string peer_id = 1; }
+message MatchRequest { string requested_policy_id = 1; }
+message MatchResult { string session_id = 1; string policy_server_id = 2; string policy_id = 3; RobotSpec robot = 4; }
+message SessionReady { string policy_id = 1; string policy_revision = 2; repeated string action_spaces = 3; uint32 control_hz = 4; uint32 max_horizon = 5; }
+message Tensor { repeated uint32 shape = 1; DataType dtype = 2; bytes data = 3; }
+message Image { string sensor_id = 1; ImageEncoding encoding = 2; uint64 capture_time_ns = 3; uint32 width = 4; uint32 height = 5; bytes data = 6; }
+message Observation { uint64 robot_time_ns = 1; uint64 control_step = 2; string instruction = 3; map<string, Tensor> state = 4; repeated Image sensors = 5; }
+message ActionPlan { uint64 request_sequence = 1; uint64 plan_id = 2; uint64 start_step = 3; uint64 valid_until_step = 4; uint32 control_hz = 5; Tensor actions = 6; }
+message ResetRequest { string reason = 1; }
+message Error { string code = 1; string message = 2; bool retryable = 3; }
