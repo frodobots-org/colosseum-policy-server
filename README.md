@@ -93,11 +93,12 @@ uv sync --extra demo
 uv run --extra demo python examples/test_policy.py
 ```
 
-No action is sent by default. `--enable-action` holds the latest joint positions and
-sends one second of a fixed gripper target per chunk, alternating between `1` and `0`:
+By default, the example holds the latest joint positions and sends one second of a fixed
+gripper target per chunk, alternating between `1` and `0`. To inspect observations
+without sending actions, disable action output explicitly:
 
 ```bash
-uv run --extra demo python examples/test_policy.py --enable-action
+uv run --extra demo python examples/test_policy.py --no-enable-action
 ```
 
 The meaning and valid range of a gripper value are robot-specific. Confirm that the

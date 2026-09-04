@@ -63,8 +63,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--enable-action",
-        action="store_true",
-        help="actually send the fake gripper action chunk (use carefully on a real robot)",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="send the demo gripper action chunk (enabled by default)",
     )
     args = parser.parse_args()
 
@@ -74,11 +75,15 @@ def main() -> None:
     if not args.enable_action:
         print(
             "Observation-only mode: no action will be sent. "
-            "Add --enable-action to send the demo chunk."
+            "Remove --no-enable-action to send the demo chunk."
         )
+    else:
+        print("Action mode enabled: demo gripper action chunks will be sent.")
 
     try:
         with ColosseumPolicySDK.from_yaml("configs/policy.yaml") as sdk:
+            print(f"Connected to Router at {sdk.router_url} as policy server {sdk.server_id}.")
+            print("Waiting for a Robot Client and observation data...")
             while True:
                 observation = sdk.get_obs()
                 _print_observation(observation)
@@ -108,6 +113,7 @@ def main() -> None:
 
                 if viewer.should_quit():
                     break
+                print("Waiting for the next observation...")
     except KeyboardInterrupt:
         pass
     finally:
