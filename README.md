@@ -105,3 +105,25 @@ The meaning and valid range of a gripper value are robot-specific. Confirm that 
 Robot Client maps these values safely before using `--enable-action` on hardware.
 
 Use `wss://` with a trusted TLS certificate outside local development.
+
+## Local WSS verification server
+
+An inbound WS(S) service validates Router-selected model specifications and, for
+`robot_type: test`, simulates download/load/warm-up and returns synthetic ActionPlans.
+It uses binary Protobuf, with no model weights or real inference:
+[commands and protocol](docs/local-verification.md).
+
+### Registered model delivery checks
+
+The default local verification server advertises synthetic verification profiles for
+MolmoAct2-DROID, GR00T-N1.7-DROID, pi05_droid, G05, and LAP-3B.
+Restart an already-running server to load the updated profiles:
+
+```bash
+uv run colosseum-policy-verify
+```
+
+These profiles acknowledge the Router-assigned URL and pinned revision over binary
+Protobuf and support simulated preparation/actions. They do not load model weights.
+The action dimensions in these profiles are communication fixtures, not validated
+inference interfaces for the corresponding models.

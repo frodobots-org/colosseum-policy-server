@@ -5,3 +5,4 @@ __pycache__/
 dist/
 *.egg-info/
 configs/policy.yaml
+local-receipts.jsonl
