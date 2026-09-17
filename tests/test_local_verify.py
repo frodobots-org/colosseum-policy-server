@@ -90,3 +90,12 @@ async def test_early_observation_rejected_without_actions(tmp_path):
             assert error['code']=='NOT_READY'
     records=[json.loads(line) for line in (tmp_path/'receipts').read_text().splitlines()]
     assert len(records)==1 and records[0]['type']=='received'
+
+
+async def test_router_assignment_starts_simulation_without_capability_query(tmp_path):
+    request = {**prepare(), 'test': True, 'task': {'robot_id': 'franka'}}
+    ws = Socket(request)
+    await VerificationServer(['molmoact2-droid-v1'], tmp_path/'receipts',
+        download_seconds=0, load_seconds=0, warmup_seconds=0).handle(ws)
+    assert [m['type'] for m in ws.sent] == ['received', 'progress', 'progress', 'progress', 'simulation_ready']
+    assert ws.sent[-1]['model'] == request['model']

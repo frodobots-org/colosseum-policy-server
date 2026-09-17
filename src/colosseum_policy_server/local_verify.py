@@ -69,9 +69,9 @@ class VerificationServer:
                     runtime_profiles=self.runtime_profiles, verification_only=True)))
                 return
             self.validate(request)
-            simulate = request.get('state') == 'simulate'
+            simulate = request.get('state') == 'simulate' or request.get('test') is True
             if simulate and (not (request.get('test') is True or request['task'].get('robot_id') == 'test')
-                             or request.get('verification_only') is not True):
+                             or (request.get('state') == 'simulate' and request.get('verification_only') is not True)):
                 raise ValueError('Simulation requires test flag and verification_only')
             receipt = dict(type='received', protocol_version=1, verification_only=True,
                 loaded=False, run_id=request['run_id'], preparation_id=request['preparation_id'],
