@@ -6,12 +6,13 @@ build-backend = "hatchling.build"
 name = "colosseum-policy-server"
 version = "0.2.0"
 description = "Pull-based policy inference SDK for Colosseum"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
   "numpy>=1.26",
   "protobuf>=6.33.5,<7",
   "PyYAML>=6,<7",
   "websockets>=15,<16",
+  "async-timeout>=4,<6; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
@@ -21,6 +22,7 @@ demo = ["opencv-python>=4.10,<5"]
 [project.scripts]
 colosseum-policy-verify = "colosseum_policy_server.local_verify:main"
 colosseum-policy-demo = "colosseum_policy_server.cli:main"
+colosseum-policy-local = "colosseum_policy_server.local_server:main"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
