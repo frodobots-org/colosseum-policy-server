@@ -72,3 +72,8 @@ def test_backend_entry_point_factory_receives_options(monkeypatch):
 def test_model_rejects_non_loopback_endpoint():
     with pytest.raises(ValueError):
         LocalModel.from_mapping({"name":"test", "url":"https://huggingface.co/example/model", "revision":"a" * 40, "runtime_profile":"test-v1", "action_space":"joint_position", "action_dim":8, "control_hz":15, "max_horizon":2, "endpoint":"ws://example.invalid:9100"})
+
+
+def test_model_accepts_loopback_http_endpoint():
+    item = LocalModel.from_mapping({"name":"test", "url":"https://huggingface.co/example/model", "revision":"a" * 40, "runtime_profile":"test-v1", "action_space":"joint_position", "action_dim":8, "control_hz":15, "max_horizon":2, "endpoint":"http://127.0.0.1:9100"})
+    assert item.endpoint == "http://127.0.0.1:9100"

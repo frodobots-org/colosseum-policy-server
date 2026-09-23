@@ -1,0 +1,22 @@
+# This starts only the Policy process. Model services, weights, and launchers
+# are installed and managed separately by the operator.
+host: 127.0.0.1
+port: 8000
+backend:
+  name: droid
+  options:
+    external_sensor: head_image
+    wrist_sensor: left_image
+models:
+  - name: example-molmo
+    url: https://huggingface.co/example/model
+    revision: 0000000000000000000000000000000000000000
+    runtime_profile: example-droid-v1
+    action_space: joint_position
+    action_dim: 8
+    control_hz: 15
+    max_horizon: 15
+    endpoint: http://127.0.0.1:9100
+    backend_options:
+      adapter: molmoact2
+      num_steps: 10

@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from importlib import metadata
 import ipaddress
 from pathlib import Path
+import socket
 import time
 import traceback
 from typing import Any, Mapping, Protocol
@@ -52,7 +53,7 @@ class LocalModel:
         try: is_loopback = endpoint.hostname is not None and ipaddress.ip_address(endpoint.hostname).is_loopback
         except ValueError: is_loopback = endpoint.hostname == "localhost"
         expected_dimension = 8 if model.action_space in {"joint_position", "joint_velocity"} else 7
-        if (not model.name or not model.url.startswith("https://huggingface.co/") or len(model.revision) != 40 or model.action_space not in {"joint_position", "joint_velocity", "cartesian_position"} or model.action_dim != expected_dimension or model.control_hz < 1 or model.max_horizon < 1 or endpoint.scheme not in {"ws", "wss"} or not is_loopback):
+        if (not model.name or not model.url.startswith("https://huggingface.co/") or len(model.revision) != 40 or model.action_space not in {"joint_position", "joint_velocity", "cartesian_position"} or model.action_dim != expected_dimension or model.control_hz < 1 or model.max_horizon < 1 or endpoint.scheme not in {"ws", "wss", "http"} or not is_loopback or endpoint.port is None):
             raise ValueError("invalid model contract")
         return model
 
@@ -89,13 +90,31 @@ class RuntimeConfig:
 
 class LocalServiceSupervisor:
     def __init__(self, config: RuntimeConfig): self.config, self.process, self.active, self.log = config, None, None, None
+    @staticmethod
+    async def _listening(endpoint: str) -> bool:
+        parsed = urlsplit(endpoint)
+        if parsed.hostname is None or parsed.port is None:
+            return False
+        try:
+            _, writer = await asyncio.wait_for(asyncio.open_connection(parsed.hostname, parsed.port), timeout=1)
+        except (OSError, asyncio.TimeoutError, socket.gaierror):
+            return False
+        writer.close()
+        await writer.wait_closed()
+        return True
     async def activate(self, model: LocalModel) -> None:
         if not model.launcher: return
         await self.stop(); self.config.log_dir.mkdir(parents=True, exist_ok=True)
         self.log = (self.config.log_dir / f"{model.name}-{time.strftime('%Y%m%d-%H%M%S')}.log").open("xb")
         self.process = await asyncio.create_subprocess_exec(*model.launcher, stdout=self.log, stderr=asyncio.subprocess.STDOUT, start_new_session=True); self.active = model
-        await asyncio.sleep(.25)
-        if self.process.returncode is not None: raise RuntimeError(f"launcher exited with status {self.process.returncode}")
+        deadline = time.monotonic() + self.config.start_timeout_seconds
+        while time.monotonic() < deadline:
+            if self.process.returncode is not None:
+                raise RuntimeError(f"launcher exited with status {self.process.returncode}")
+            if await self._listening(model.endpoint):
+                return
+            await asyncio.sleep(.25)
+        raise RuntimeError("launcher did not make its loopback endpoint available before timeout")
     async def stop(self) -> None:
         process, self.process, self.active = self.process, None, None
         if process is not None and process.returncode is None: process.terminate(); await process.wait()
