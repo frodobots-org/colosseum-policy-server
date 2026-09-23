@@ -1,129 +1,154 @@
 # Colosseum Policy Server
 
-Pull-based Python SDK for running a policy behind a Colosseum Router. The policy host
-doesn't need a public IP; it initiates an outbound WSS connection to the router.
+Serve your models for robot task evaluation on
+[Robo Colosseum](https://frodobots-org.github.io/robo-colosseum/).
 
-## SDK usage
+## Installation
 
-```python
-from colosseum_policy_server import ColosseumPolicySDK
+Requirements: Python 3.10 or later, Git, and `uv` available on your PATH.
+Run the following on the machine that will host the Policy Server:
 
-
-def main():
-    sdk = ColosseumPolicySDK.from_yaml("configs/policy.yaml")
-
-    with sdk:
-        while True:
-            obs = sdk.get_obs()
-            actions = model.infer(obs)  # NumPy shape: (horizon, action_dim)
-            sdk.send_action(actions)
-
-
-main()
+```bash
+git clone git@github.com:frodobots-org/colosseum-policy-server.git
+cd colosseum-policy-server
+uv sync
 ```
 
-`configs/policy.yaml` contains only the Router URL and the Policy Server token:
+## Host a Local Policy Server
+
+Use this option if you are an evaluator with your own local computer for
+inference. Host the Policy Server on your computer, and connect the
+[Robot Client](https://github.com/frodobots-org/colosseum-client) to it to run
+evaluations using your own compute resources.
+
+### Start the example server
+
+This example simulates model preparation and inference without loading model weights.
+
+From the `colosseum-policy-server` directory, run:
+
+```bash
+uv run colosseum-policy-verify
+```
+
+The server listens at `ws://127.0.0.1:8000`. Leave it running while you start the
+Client. If the Client runs on another machine, use:
+
+```bash
+uv run colosseum-policy-verify --host 0.0.0.0 --port 8000
+```
+
+## Host a Remote Policy Server
+
+Host your models on your own inference machine so evaluators can use your compute
+resources and models to run evaluations. The
+[Robot Client](https://github.com/frodobots-org/colosseum-client) exchanges
+observations and actions with your Policy Server through the Router.
+
+### Run the Example
+
+Install the demo dependencies and create the Policy Server configuration:
+
+```bash
+uv sync --extra demo
+cp configs/policy.yaml.example configs/policy.yaml
+```
+
+Edit it with your Router endpoint and **Policy Server token** from the Router admin:
 
 ```yaml
 url: wss://router.example.com:8443
 token: pol_replace_with_token_from_router_ui
 ```
 
-Keep this file private and out of Git:
+Start the SDK example:
 
 ```bash
-chmod 600 configs/policy.yaml
-```
-
-The Router derives `server_id` from the token record and uses the token name from the
-admin UI as `policy_id`. The SDK defaults to `joint_position`, 15 Hz and a maximum
-16-step action horizon.
-
-`get_obs()` returns the latest unclaimed observation with NumPy robot state and images.
-Its queue holds one item, so an observation that hasn't been claimed is
-replaced when a newer one arrives. `send_action()` automatically correlates the action
-chunk with the observation sequence and rejects duplicate, expired, non-finite or
-oversized chunks.
-
-After a Robot Client is matched, its registered hardware specification is available as:
-
-```python
-sdk.robot.robot_type
-sdk.robot.joint_count
-sdk.robot.has_gripper
-sdk.robot.control_hz
-sdk.robot.action_spaces       # e.g. {"joint_position": 8}
-sdk.selected_action_space     # e.g. "joint_position"
-```
-
-`send_action()` enforces the selected action dimension. For example, if the Client
-registers `joint_position: 8`, a chunk shaped `(16, 7)` or `(16, 9)` is rejected before
-it reaches the robot.
-
-For inference workers, retain the observation and pass it explicitly:
-
-```python
-obs = sdk.get_obs()
-actions = run_inference(obs)
-sdk.send_action(actions, observation=obs)
-```
-
-The blocking SDK runs WSS on a background event-loop thread. Applications that already
-use asyncio can import `AsyncColosseumPolicySDK` and use `await get_obs()` / `await
-send_action()` directly.
-
-## Example
-
-`examples/test_policy.py` prints instructions, joint/gripper state and image shapes in
-the terminal. Camera frames are displayed in OpenCV windows; press `q` or
-Escape to exit.
-
-Policies can access standardized inputs directly. Missing cameras return `None`:
-
-```python
-obs.state.left_image    # RGB uint8 array shaped (height, width, 3)
-obs.state.right_image
-obs.state.head_image
-obs.state.joints        # float32 array shaped (joint_count,)
-obs.state.gripper       # float32 array shaped (1,)
-```
-
-```bash
-uv sync --extra demo
 uv run --extra demo python examples/test_policy.py
 ```
 
-By default, the example holds the latest joint positions and sends one second of a fixed
-gripper target per chunk, alternating between `1` and `0`. To inspect observations
-without sending actions, disable action output explicitly:
+The example connects to the Router and waits for observations. When an evaluator
+starts a remote evaluation and the Router matches their Client to your Policy
+Server, you will see task instructions, joint/gripper state, and image shapes in
+the terminal. Camera images appear in OpenCV windows, so run this example with a
+graphical display. Press `q` or Escape in an image window to exit.
+
+The example also sends demo actions: it holds the observed joint positions and
+alternates the gripper target between `1` and `0`. To only inspect incoming data,
+run:
 
 ```bash
 uv run --extra demo python examples/test_policy.py --no-enable-action
 ```
 
-The meaning and valid range of a gripper value are robot-specific. Confirm that the
-Robot Client maps these values safely before using `--enable-action` on hardware.
+Observation-only mode sends no actions, so the Client may reach its inference
+deadline. After checking the connection and observation format, replace the demo
+policy with your own model using the SDK below.
 
-Use `wss://` with a trusted TLS certificate outside local development.
+### Connect your model
 
-## Local WSS verification server
+Install your model's dependencies in the same Python environment. Create
+`serve_policy.py` in the repository root using this template:
 
-An inbound WS(S) service validates Router-selected model specifications and, for
-`robot_type: test`, simulates download/load/warm-up and returns synthetic ActionPlans.
-It uses binary Protobuf, with no model weights or real inference:
-[commands and protocol](docs/local-verification.md).
+```python
+from colosseum_policy_server import ColosseumPolicySDK
+from your_policy import load_model  # Replace with your own model loader.
 
-### Registered model delivery checks
 
-The default local verification server advertises synthetic verification profiles for
-MolmoAct2-DROID, GR00T-N1.7-DROID, pi05_droid, G05, and LAP-3B.
-Restart an already-running server to load the updated profiles:
+def main():
+    model = load_model()
 
-```bash
-uv run colosseum-policy-verify
+    with ColosseumPolicySDK.from_yaml("configs/policy.yaml") as sdk:
+        print("Connected to Router. Waiting for observations...", flush=True)
+        while True:
+            obs = sdk.get_obs()
+            actions = model.infer(obs)
+            sdk.send_action(actions, observation=obs)
+
+
+if __name__ == "__main__":
+    main()
 ```
 
-These profiles acknowledge the Router-assigned URL and pinned revision over binary
-Protobuf and support simulated preparation/actions. They do not load model weights.
-The action dimensions in these profiles are communication fixtures, not validated
-inference interfaces for the corresponding models.
+`your_policy` is your own module, not a package included in this repository.
+Replace the import and model-loading call with your implementation. Your
+`model.infer(obs)` adapter should convert the observation to your model's inputs
+and return a NumPy array shaped `(horizon, action_dim)` in the Client's agreed
+action space.
+
+For example, observations expose:
+
+```python
+obs.instruction        # Task instruction.
+obs.state.head_image   # RGB uint8 image; None if absent.
+obs.state.left_image
+obs.state.right_image
+obs.state.joints       # Robot joint positions.
+obs.state.gripper      # Gripper state.
+```
+
+For JPEG/PNG observations, install the image-decoding dependency with
+`uv sync --extra demo`.
+
+The YAML-based SDK defaults to `joint_position`, 15 Hz, and a maximum 16-step
+action horizon. These settings must suit your model and the Client. To customize
+them, construct `ColosseumPolicySDK` directly with `router_url`, `token`,
+`action_spaces`, `control_hz`, and `max_horizon` instead of using `from_yaml`.
+
+After matching, `sdk.robot` exposes the Client's hardware specification and
+`sdk.selected_action_space` identifies the selected action space. The SDK checks
+action dimensions, horizon, finite values, and observation deadlines before
+sending actions.
+
+### Start the Policy Server
+
+After implementing your model loader and inference adapter, run:
+
+```bash
+uv run python serve_policy.py
+```
+
+The script loads your model, connects to the Router, and waits for observations.
+Keep it running while evaluators use your policy. Once the Router matches a
+Client to your Policy Server, each observation is passed to your model and the
+resulting actions are sent back through the Router.
