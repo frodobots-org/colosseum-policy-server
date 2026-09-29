@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from dataclasses import replace
 
 from websockets.asyncio.server import serve
 
@@ -20,12 +21,20 @@ async def run(config: RuntimeConfig) -> None:
             await runtime.supervisor.stop()
 
 
+def configured_runtime(path: str, robot: str | None = None) -> RuntimeConfig:
+    config = RuntimeConfig.from_yaml(path)
+    if robot is not None:
+        config = replace(config, backend_name=robot)
+    return config
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Serve registered local VLA models over Local Protocol v1")
     parser.add_argument("--config", required=True, help="YAML local runtime configuration")
+    parser.add_argument("--robot", metavar="ROBOT", help="Select an installed robot backend (for example droid or yam)")
     args = parser.parse_args()
     try:
-        asyncio.run(run(RuntimeConfig.from_yaml(args.config)))
+        asyncio.run(run(configured_runtime(args.config, args.robot)))
     except KeyboardInterrupt:
         pass
 

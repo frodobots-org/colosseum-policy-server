@@ -138,11 +138,13 @@ message Error {
 message LocalModelSpec {
   string url = 1;
   string revision = 2;
-  string runtime_profile = 3;
+  // Legacy Router metadata: echo unchanged, never use for backend selection.
+  optional string runtime_profile = 3;
   string action_space = 4;
   uint32 action_dim = 5;
   uint32 control_hz = 6;
   uint32 max_horizon = 7;
+  optional string subfolder = 8;
 }
 message LocalTaskSpec {
   optional string id = 1;
@@ -162,7 +164,8 @@ message LocalControl {
   string preparation_id = 4;
   LocalModelSpec model = 5;
   LocalTaskSpec task = 6;
-  repeated string runtime_profiles = 7;
+  reserved 7;
+  reserved "runtime_profiles";
   optional bool verification_only = 8;
   optional bool loaded = 9;
   string transport = 10;

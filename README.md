@@ -1,9 +1,5 @@
 # Colosseum Policy Server
 
-For real DROID external-model inference, see [DROID backend setup](docs/droid-inference.md).
-The optional `droid` backend includes model-service protocol clients and action
-conversion; model services and weights are installed separately.
-
 Serve your models for robot task evaluation on
 [Robo Colosseum](https://frodobots-org.github.io/robo-colosseum/).
 
@@ -20,27 +16,39 @@ uv sync
 
 ## Host a Local Policy Server
 
-Use this option if you are an evaluator with your own local computer for
-inference. Host the Policy Server on your computer, and connect the
-[Robot Client](https://github.com/frodobots-org/colosseum-client) to it to run
-evaluations using your own compute resources.
+Run the Policy Server on your inference computer and connect the Robot Client to it.
 
-### Start the example server
+### Test Backend
 
-This example simulates model preparation and inference without loading model weights.
-
-From the `colosseum-policy-server` directory, run:
+Test communication without loading a model:
 
 ```bash
-uv run colosseum-policy-verify
+uv run colosseum-policy-test-backend
 ```
 
-The server listens at `ws://127.0.0.1:8000`. Leave it running while you start the
-Client. If the Client runs on another machine, use:
+Connect the Client to `ws://127.0.0.1:8000` with `test: true`. The server returns
+received joint and gripper positions as a one-step `joint_position` action.
+The action dimension must match the combined state length. No model inference
+is performed.
+
+### Run a Real Robot Policy Server
+
+Install your robot's backend and model service, then start the server with your
+model configuration:
 
 ```bash
-uv run colosseum-policy-verify --host 0.0.0.0 --port 8000
+uv run colosseum-policy-local --robot <robot> --config /path/to/policy.yaml
 ```
+
+For example, using the DROID backend:
+
+```bash
+uv run --extra droid colosseum-policy-local --robot droid --config /path/to/droid-policy.yaml
+```
+
+`--robot` selects the installed backend. The configuration specifies the model
+and service endpoint. DROID is included; YAM requires a separately implemented
+backend. Start the model service separately or configure its launcher.
 
 ## Host a Remote Policy Server
 

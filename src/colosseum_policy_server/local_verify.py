@@ -1,4 +1,4 @@
-"""Protobuf receipt checks and explicitly requested synthetic inference; no weights."""
+"""Test backend: Protobuf receipt checks and joint echo; no model weights."""
 from __future__ import annotations
 
 import argparse
@@ -8,6 +8,7 @@ import json
 import hashlib
 import math
 import struct
+from types import SimpleNamespace
 from pathlib import Path
 import re
 import ssl
@@ -20,18 +21,21 @@ from websockets.asyncio.server import serve
 from websockets.exceptions import ConnectionClosed
 
 
+from .backends.test_backend import TestBackend
+from .tensors import tensor_from_numpy
+
+
 class VerificationServer:
-    def __init__(self, runtime_profiles, receipts: str | Path, *, download_seconds=3,
-                 load_seconds=2, warmup_seconds=1, inference_seconds=.5):
+    def __init__(self, receipts: str | Path, *, download_seconds=3,
+                 load_seconds=2, warmup_seconds=1, inference_seconds=.5, state_fields=None):
         self.stages = [("downloading", download_seconds), ("loading", load_seconds),
                        ("warming_up", warmup_seconds)]
         self.inference_seconds = inference_seconds
+        self.backend = TestBackend({"state_fields": state_fields} if state_fields is not None else {})
         if any(not math.isfinite(v) or v < 0 for v in
                (download_seconds, load_seconds, warmup_seconds, inference_seconds)):
             raise ValueError("Simulation delays must be finite and nonnegative")
-        self.runtime_profiles = sorted(set(runtime_profiles))
-        if not self.runtime_profiles or any(not isinstance(p, str) or not p or len(p) > 100 for p in self.runtime_profiles):
-            raise ValueError('Specify at least one valid runtime profile')
+
         self.receipts = Path(receipts)
         self.receipts.parent.mkdir(parents=True, exist_ok=True)
 
@@ -48,8 +52,6 @@ class VerificationServer:
             raise ValueError('Expected Hugging Face model URL')
         if not isinstance(model.get('revision'), str) or not re.fullmatch('[a-fA-F0-9]{40}', model['revision']):
             raise ValueError('Expected pinned model revision')
-        if model.get('runtime_profile') not in self.runtime_profiles:
-            raise ValueError('Unsupported runtime profile')
         if not isinstance(model.get('action_space'), str) or not model['action_space']:
             raise ValueError('Missing action space')
         for field, maximum in [('action_dim',256), ('control_hz',1000), ('max_horizon',1000)]:
@@ -66,7 +68,7 @@ class VerificationServer:
                 raise ValueError('Expected Protobuf control message')
             if request.get('type') == 'capabilities' and request.get('protocol_version') == 1:
                 await ws.send(encode_control(dict(type='capabilities', protocol_version=1,
-                    runtime_profiles=self.runtime_profiles, verification_only=True)))
+                    verification_only=True)))
                 return
             self.validate(request)
             simulate = request.get('state') == 'simulate' or request.get('test') is True
@@ -110,8 +112,8 @@ class VerificationServer:
         if frame.type != pb.OBSERVATION or frame.protocol_version != 1 or frame.session_id != run_id or frame.sequence != sequence:
             raise ValueError('Invalid dummy observation frame')
         obs = pb.Observation.FromString(frame.payload)
-        if not obs.state or not obs.sensors:
-            raise ValueError('Missing dummy state or image')
+        if not obs.state:
+            raise ValueError('Missing observation state')
         for tensor in obs.state.values():
             count = math.prod(tensor.shape)
             if not tensor.shape or count < 1 or tensor.dtype != pb.FLOAT32 or len(tensor.data) != count*4:
@@ -167,10 +169,10 @@ class VerificationServer:
                 return
             await asyncio.sleep(self.inference_seconds)
             model = request['model']
+            actions = await self.backend.infer(SimpleNamespace(**model), obs)
             plan = pb.ActionPlan(request_sequence=sequence, plan_id=sequence,
                 start_step=obs.control_step, valid_until_step=obs.control_step,
-                control_hz=model['control_hz'], actions=pb.Tensor(shape=[1,model['action_dim']],
-                    dtype=pb.FLOAT32, data=struct.pack(f"<{model['action_dim']}f", *([0.0]*model['action_dim']))))
+                control_hz=model['control_hz'], actions=tensor_from_numpy(actions))
             await ws.send(pb.RelayFrame(protocol_version=1, type=pb.ACTION_PLAN,
                 session_id=request['run_id'], sequence=sequence, payload=plan.SerializeToString()).SerializeToString())
             record = dict(type='simulated_action', run_id=request['run_id'], observation_sequence=sequence,
@@ -191,39 +193,31 @@ def tls_context(certfile, keyfile):
 
 
 async def run(args):
-    verifier = VerificationServer(args.runtime_profile, args.receipts,
+    verifier = VerificationServer(args.receipts,
         download_seconds=args.download_seconds, load_seconds=args.load_seconds,
-        warmup_seconds=args.warmup_seconds, inference_seconds=args.inference_seconds)
+        warmup_seconds=args.warmup_seconds, inference_seconds=args.inference_seconds,
+        state_fields=args.state_field)
     context = tls_context(args.certfile, args.keyfile) if args.certfile else None
     async with serve(verifier.handle, args.host, args.port,
                      ssl=context, max_size=32 * 1024 * 1024,
                      compression=None, ping_interval=10, ping_timeout=10):
-        print(f'{"WSS" if context else "WS"} verification server listening on {args.host}:{args.port}; synthetic test inference available; no weights loaded', flush=True)
+        print(f'{"WSS" if context else "WS"} verification server listening on {args.host}:{args.port}; test backend echoes joint state; no weights loaded', flush=True)
         await asyncio.Future()
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Test model preparation and synthetic inference over Protobuf WS(S)')
+    parser = argparse.ArgumentParser(description='Test backend: echo joint positions over Protobuf WS(S), without model inference')
     parser.add_argument('--host', default='127.0.0.1')
     parser.add_argument('--port', type=int, default=8000)
     parser.add_argument('--certfile')
     parser.add_argument('--keyfile')
-    parser.add_argument('--runtime-profile', action='append')
     parser.add_argument('--receipts', default='local-receipts.jsonl')
+    parser.add_argument('--state-field', action='append', help='State vector to echo; repeat in action order (default: joint_position, gripper_position)')
     for phase, default in [('download',3), ('load',2), ('warmup',1), ('inference',.5)]:
         parser.add_argument(f'--{phase}-seconds', type=float, default=default)
     args = parser.parse_args()
     if bool(args.certfile) != bool(args.keyfile):
         parser.error("Supply both --certfile and --keyfile for WSS")
-    # Verification profiles describe synthetic transport contracts, not real runtimes.
-    args.runtime_profile = args.runtime_profile or [
-        "molmoact2-droid-v1",
-        "verify-molmoact2-droid-v1",
-        "verify-gr00t-n17-droid-v1",
-        "verify-pi05-droid-v1",
-        "verify-g05-droid-v1",
-        "verify-lap-3b-v1",
-    ]
     try:
         asyncio.run(run(args))
     except KeyboardInterrupt:

@@ -21,10 +21,10 @@ demo = ["opencv-python>=4.10,<5"]
 droid = ["msgpack>=1,<2", "pyzmq>=25,<28", "scipy>=1.10,<2"]
 
 [project.entry-points."colosseum_policy_server.backends"]
-droid = "colosseum_policy_server.droid_backend:create_backend"
+droid = "colosseum_policy_server.backends.droid:create_backend"
 
 [project.scripts]
-colosseum-policy-verify = "colosseum_policy_server.local_verify:main"
+colosseum-policy-test-backend = "colosseum_policy_server.local_verify:main"
 colosseum-policy-demo = "colosseum_policy_server.cli:main"
 colosseum-policy-local = "colosseum_policy_server.local_server:main"
 

@@ -16,7 +16,7 @@ def model(adapter, action_space="joint_position", action_dim=8):
         "name": adapter,
         "url": "https://huggingface.co/example/model",
         "revision": "a" * 40,
-        "runtime_profile": f"{adapter}-v1",
+        "subfolder": "",
         "action_space": action_space,
         "action_dim": action_dim,
         "control_hz": 15,
@@ -157,3 +157,11 @@ def test_lap_zero_relative_pose_preserves_pose_and_inverts_gripper():
     result = _lap_absolute(np.zeros((2, 7), dtype=np.float32), pose)
     np.testing.assert_allclose(result[:, :6], np.tile(pose, (2, 1)), atol=1e-6)
     np.testing.assert_allclose(result[:, 6], 1.)
+
+
+async def test_droid_rejects_other_robot_dimensions():
+    from dataclasses import replace
+    backend = DroidBackend({})
+    six_joint = replace(model('pi05_lerobot', 'joint_velocity'), action_dim=6)
+    with pytest.raises(ValueError, match='action space'):
+        await backend.infer(six_joint, observation())

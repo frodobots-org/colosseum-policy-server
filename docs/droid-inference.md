@@ -16,7 +16,7 @@ python -c 'from importlib.metadata import entry_points; print([(e.name, e.value)
 python -c 'from colosseum_policy_server.local_runtime import load_backend; print(type(load_backend("droid", {})).__name__)'
 ```
 
-Expect `droid` pointing to `colosseum_policy_server.droid_backend:create_backend`
+Expect `droid` pointing to `colosseum_policy_server.backends.droid:create_backend`
 and `DroidBackend`. These two checks do not start a service or load weights.
 Setting `PYTHONPATH` alone does not install entry-point metadata; reinstall the
 package when upgrading from a version without this backend.
@@ -64,7 +64,7 @@ G05 and LAP gripper conventions are inverted when producing DROID actions.
 ## Configure and run
 
 Copy `configs/local-runtime-droid-example.yaml` to your own local configuration.
-Replace its placeholder model URL, revision, profile, endpoint, and horizon
+Replace its placeholder model URL, revision, endpoint, and horizon
 with values matching both your service and the Router assignment. Use `ws://`
 for WebSocket adapters and `tcp://` for GR00T. LAP requires action_dim 7 and
 cartesian_position; pi05 requires joint_velocity and action_dim 8.
@@ -90,3 +90,11 @@ Tests use synthetic arrays and fake services; they neither load weights nor
 access hardware. Protocol and conversion tests do not certify model quality,
 checkpoint compatibility, or successful robot motion. Each installed service
 requires its own inference acceptance test before hardware use.
+
+Runtime profiles are optional legacy metadata. If a Router sends
+`runtime_profile`, the server echoes it unchanged in readiness replies but does
+not validate its value or use it to select a backend. Profiles are not advertised
+in capabilities, and the verification CLI no longer requires profile options. The runtime matches the
+model URL, revision, and action contract. Subfolder metadata is passed back in
+readiness replies but is not used to select or load checkpoints. Model services
+remain responsible for loading the intended weights.

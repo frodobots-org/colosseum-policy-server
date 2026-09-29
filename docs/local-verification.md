@@ -9,7 +9,7 @@ track: 1          # 1 Open, 2 Fine-tuning
 `test` must be a YAML boolean. The normal Client command and evaluation workflow
 are shared. Dummy local action dimensions follow the Router-assigned model contract;
 this is a transport fixture, not a validated YAM hardware interface. Model loading
-is still simulated by `colosseum-policy-verify`.
+is still simulated by `colosseum-policy-test-backend`.
 
 Router persists an immutable test flag per assignment, exposes it in Open and
 Fine-tuning reviews, and excludes synthetic results from formal ranking, difficulty
@@ -29,7 +29,7 @@ should always use a real robot_type with a separate test flag.
 Restart the Policy Server after updating its source. From `colosseum-policy-server`:
 
 ```bash
-uv run colosseum-policy-verify
+uv run colosseum-policy-test-backend
 ```
 
 From `colosseum-client`:
@@ -66,8 +66,11 @@ Client enables inference immediately and reports readiness to Router in the back
 explicitly retaining `verification_only=true`, `loaded=false`, and `state=simulation`.
 This is a completed simulation trial, not a claim of real model loading.
 
-Each observation comes from the dummy adapter. After 0.5s the server returns a zero
-ActionPlan with the assigned dimension. Client records frames, validates and applies
+Each observation comes from the dummy adapter. After 0.5s the server returns an
+ActionPlan echoing joint and gripper positions. The assigned action space must be
+`joint_position`, and its dimension must equal the combined state length. Other
+state orders can be selected with repeated `--state-field` options. Client records
+frames, validates and applies
 actions in memory. Open Track runs A, asks for partial success, then prompts to restore
 the scene and runs B, asks for partial success and A/B/tie preference, and uploads
 videos/results. Fine-tuning follows the same single-trial evaluation workflow as other
@@ -87,7 +90,7 @@ completion waits for all reported steps to be persisted before scoring or switch
 Optional slow-service testing (normal users do not need these flags):
 
 ```bash
-uv run colosseum-policy-verify --download-seconds 20 --load-seconds 10 --warmup-seconds 5 --inference-seconds 2
+uv run colosseum-policy-test-backend --download-seconds 20 --load-seconds 10 --warmup-seconds 5 --inference-seconds 2
 ```
 
 All delays are synthetic; no weights are downloaded or loaded. The test deployment's
