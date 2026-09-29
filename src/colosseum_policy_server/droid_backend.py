@@ -54,6 +54,9 @@ class DroidBackend:
         adapter = model.backend_options.get("adapter")
         if adapter not in _ADAPTERS:
             raise ValueError("backend_options.adapter is not a supported DROID adapter")
+        expected_space = {"pi05_lerobot": "joint_velocity", "lap_3b": "cartesian_position"}.get(adapter, "joint_position")
+        if model.action_space != expected_space:
+            raise ValueError("model action space does not match the selected adapter")
         source = self._observation(observation, require_cartesian=adapter in {"groot_n17", "lap_3b"})
         if adapter == "molmoact2":
             return await asyncio.to_thread(self._molmo, model, source)
@@ -123,6 +126,8 @@ class DroidBackend:
             raise ValueError(f"model service returned HTTP {exc.code}") from exc
         except (URLError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ValueError("model service returned an invalid response") from exc
+        if isinstance(raw, Mapping) and "error" in raw:
+            raise ValueError("model service reported an inference error")
         if not isinstance(raw, Mapping) or "actions" not in raw:
             raise ValueError("model service response is missing actions")
         return _finite_matrix(_json_decode(raw["actions"]), model.action_dim)
@@ -158,12 +163,14 @@ class DroidBackend:
             socket.setsockopt(zmq.RCVTIMEO, 240000)
             socket.setsockopt(zmq.SNDTIMEO, 30000)
             socket.connect(endpoint)
-            socket.send(msgpack.packb({"endpoint": "get_action", "data": {"observation": dict(payload), "options": None}}, default=_msgpack_default))
+            socket.send(msgpack.packb({"endpoint": "get_action", "data": {"observation": dict(payload), "options": None}}, default=_groot_default, use_bin_type=True))
             raw = msgpack.unpackb(socket.recv(), object_hook=_msgpack_object, raw=False, strict_map_key=False)
         finally:
             if socket is not None:
                 socket.close(linger=0)
             context.term()
+        if isinstance(raw, Mapping) and "error" in raw:
+            raise ValueError("model service reported an inference error")
         if isinstance(raw, Mapping) and "action" in raw:
             raw = raw["action"]
         elif isinstance(raw, (list, tuple)) and raw:
@@ -173,8 +180,13 @@ class DroidBackend:
         return dict(raw)
 
     def _actions(self, adapter: str, raw: Mapping[str, Any], source: DroidObservation, action_dim: int) -> np.ndarray:
+        if "error" in raw:
+            raise ValueError("model service reported an inference error")
         if adapter == "pi05_lerobot":
-            return _finite_matrix(raw.get("actions"), action_dim)
+            actions = _finite_matrix(raw.get("actions"), action_dim)
+            if np.any(np.abs(actions[:, :7]) > 1):
+                raise ValueError("normalized joint velocities must be in [-1, 1]")
+            return actions
         if adapter == "groot_n17":
             joints, gripper = raw.get("joint_position"), raw.get("gripper_position")
             joints = np.asarray(joints, dtype=np.float32)
@@ -189,8 +201,10 @@ class DroidBackend:
             if not isinstance(action, Mapping):
                 raise ValueError("G05 response is missing action")
             arm = np.asarray(action.get("right_arm", action.get("joint_position")), dtype=np.float32).reshape(-1)
-            value = action.get("right_gripper", action.get("gripper", source.gripper))
-            gripper = 1.0 - np.asarray(value, dtype=np.float32).reshape(-1)
+            value = action.get("right_gripper", action.get("gripper"))
+            gripper = source.gripper if value is None else 1.0 - np.asarray(value, dtype=np.float32).reshape(-1)
+            if arm.shape != (7,) or gripper.shape != (1,) or not np.isfinite(np.r_[arm, gripper]).all():
+                raise ValueError("G05 response requires seven finite joints and one finite gripper value")
             return _finite_matrix(np.concatenate((arm, np.clip(gripper, 0, 1)))[None], action_dim)
         actions = _finite_matrix(raw.get("actions"), action_dim)
         return _lap_absolute(actions, source.cartesian)
@@ -238,6 +252,8 @@ def _json_decode(value: Any) -> np.ndarray:
     if not isinstance(value, Mapping) or set(value) != {"__numpy__", "dtype", "shape"}:
         raise ValueError("model actions have an invalid array encoding")
     dtype, shape = np.dtype(value["dtype"]), value["shape"]
+    if dtype.kind not in "biuf":
+        raise ValueError("model actions require numeric array data")
     if not isinstance(shape, list) or not shape or any(type(item) is not int or item < 1 for item in shape) or int(np.prod(shape)) > 1_000_000:
         raise ValueError("model actions have an invalid shape")
     try:
@@ -250,6 +266,8 @@ def _json_decode(value: Any) -> np.ndarray:
 
 
 def _finite_matrix(value: Any, action_dim: int) -> np.ndarray:
+    if value is None:
+        raise ValueError("model service response is missing actions")
     actions = np.asarray(value, dtype=np.float32)
     if actions.ndim != 2 or actions.shape[0] < 1 or actions.shape[1] != action_dim or not np.isfinite(actions).all():
         raise ValueError("model actions must be a finite two-dimensional action array")
@@ -278,16 +296,37 @@ def _lap_absolute(actions: np.ndarray, cartesian: np.ndarray) -> np.ndarray:
 
 
 def _msgpack_default(value: Any) -> Any:
+    if isinstance(value, (np.ndarray, np.generic)) and value.dtype.kind in "OVc":
+        raise ValueError("unsupported array dtype")
     if isinstance(value, np.ndarray):
-        return {"__ndarray__": True, "data": value.tobytes(), "dtype": value.dtype.str, "shape": value.shape}
+        return {b"__ndarray__": True, b"data": value.tobytes(), b"dtype": value.dtype.str, b"shape": value.shape}
     if isinstance(value, np.generic):
-        return {"__npgeneric__": True, "data": value.item(), "dtype": value.dtype.str}
+        return {b"__npgeneric__": True, b"data": value.item(), b"dtype": value.dtype.str}
     raise TypeError(f"cannot MessagePack {type(value).__name__}")
 
 
 def _msgpack_object(value: dict[Any, Any]) -> Any:
+    value = {key.decode("ascii") if isinstance(key, bytes) else key: item for key, item in value.items()}
+    if "nd" in value:
+        dtype = np.dtype(value["type"])
+        if dtype.kind in "OVc":
+            raise ValueError("unsupported array dtype")
+        array = np.frombuffer(value["data"], dtype=dtype)
+        return array.reshape(tuple(value["shape"])).copy() if value["nd"] else array[0]
     if "__ndarray__" in value:
+        if np.dtype(value["dtype"]).kind in "OVc":
+            raise ValueError("unsupported array dtype")
         return np.frombuffer(value["data"], dtype=np.dtype(value["dtype"])).reshape(tuple(value["shape"])).copy()
     if "__npgeneric__" in value:
         return np.dtype(value["dtype"]).type(value["data"])
     return value
+
+
+def _groot_default(value: Any) -> Any:
+    if isinstance(value, (np.ndarray, np.generic)):
+        array = np.asarray(value)
+        if array.dtype.kind in "OVc":
+            raise ValueError("unsupported array dtype")
+        return {b"nd": isinstance(value, np.ndarray), b"type": array.dtype.str,
+                b"shape": array.shape, b"data": array.tobytes()}
+    raise TypeError("unsupported MessagePack value")

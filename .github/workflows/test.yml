@@ -13,5 +13,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: python -m pip install -e '.[dev]'
+      - run: python -m pip install -e '.[dev,droid]'
+      - run: python -c "from colosseum_policy_server.local_runtime import load_backend; print(type(load_backend('droid', {})).__name__)"
       - run: python -m pytest -q

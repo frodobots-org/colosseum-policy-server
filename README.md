@@ -1,5 +1,9 @@
 # Colosseum Policy Server
 
+For real DROID external-model inference, see [DROID backend setup](docs/droid-inference.md).
+The optional `droid` backend includes model-service protocol clients and action
+conversion; model services and weights are installed separately.
+
 Serve your models for robot task evaluation on
 [Robo Colosseum](https://frodobots-org.github.io/robo-colosseum/).
 

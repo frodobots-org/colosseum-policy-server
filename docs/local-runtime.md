@@ -26,3 +26,6 @@ Use `configs/local-runtime-droid-example.yaml` as a schema reference. Replace
 all example identity values and endpoints with your own installed service. A
 model entry may provide an optional launcher argv list, which the local runtime
 executes as a separate process and records in its configured log directory.
+
+See [DROID inference setup](droid-inference.md) for installation, plugin
+verification, service contracts, and the model-loading boundary.

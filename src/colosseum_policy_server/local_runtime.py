@@ -53,7 +53,7 @@ class LocalModel:
         try: is_loopback = endpoint.hostname is not None and ipaddress.ip_address(endpoint.hostname).is_loopback
         except ValueError: is_loopback = endpoint.hostname == "localhost"
         expected_dimension = 8 if model.action_space in {"joint_position", "joint_velocity"} else 7
-        if (not model.name or not model.url.startswith("https://huggingface.co/") or len(model.revision) != 40 or model.action_space not in {"joint_position", "joint_velocity", "cartesian_position"} or model.action_dim != expected_dimension or model.control_hz < 1 or model.max_horizon < 1 or endpoint.scheme not in {"ws", "wss", "http"} or not is_loopback or endpoint.port is None):
+        if (not model.name or not model.url.startswith("https://huggingface.co/") or len(model.revision) != 40 or model.action_space not in {"joint_position", "joint_velocity", "cartesian_position"} or model.action_dim != expected_dimension or model.control_hz < 1 or model.max_horizon < 1 or endpoint.scheme not in {"ws", "wss", "http", "tcp"} or not is_loopback or endpoint.port is None):
             raise ValueError("invalid model contract")
         return model
 
