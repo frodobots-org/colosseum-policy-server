@@ -27,6 +27,7 @@ droid = "colosseum_policy_server.backends.droid:create_backend"
 colosseum-policy-test-backend = "colosseum_policy_server.local_verify:main"
 colosseum-policy-demo = "colosseum_policy_server.cli:main"
 colosseum-policy-local = "colosseum_policy_server.local_server:main"
+colosseum-policy-model = "colosseum_policy_server.model_service:main"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

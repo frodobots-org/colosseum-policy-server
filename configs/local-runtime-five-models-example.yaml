@@ -1,0 +1,79 @@
+# Replace all /path/to placeholders. Each interpreter belongs to an installed
+# upstream SDK environment with this Policy package installed --no-deps.
+host: 127.0.0.1
+port: 8000
+log_dir: local-policy-logs
+start_timeout_seconds: 600
+backend:
+  name: droid
+  options:
+    external_sensor: head_image
+    wrist_sensor: left_image
+models:
+  - name: molmoact2
+    url: https://huggingface.co/allenai/MolmoAct2-DROID
+    revision: "d8c1abd8a27d8e859455bbe514df2bcc617db0fb"
+    runtime_profile: molmoact2-droid-v1
+    action_space: joint_position
+    action_dim: 8
+    control_hz: 15
+    max_horizon: 15
+    endpoint: http://127.0.0.1:9101
+    backend_options: {adapter: molmoact2, num_steps: 10}
+    launcher: [/path/to/molmo-env/bin/python, -m, colosseum_policy_server.model_service,
+               molmoact2, --checkpoint, /path/to/molmo-snapshot, --device, "cuda:0",
+               --dtype, bfloat16, --patch-molmo-bf16, --port, "9101"]
+  - name: pi05_lerobot
+    url: https://huggingface.co/lerobot/pi05_droid
+    revision: "72824c0a93f00ce5bb8bedb7feb58953ba1da364"
+    runtime_profile: lerobot-pi05-droid-v1
+    action_space: joint_velocity
+    action_dim: 8
+    control_hz: 15
+    max_horizon: 15
+    endpoint: ws://127.0.0.1:9112
+    backend_options: {adapter: pi05_lerobot}
+    launcher: [/path/to/pi05-env/bin/python, -m, colosseum_policy_server.model_service,
+               pi05_lerobot, --checkpoint, /path/to/lerobot-pi05,
+               --tokenizer, /path/to/paligemma-tokenizer, --stats, /path/to/norm_stats.json,
+               --device, cuda, --port, "9112"]
+  - name: groot_n17
+    url: https://huggingface.co/nvidia/GR00T-N1.7-DROID
+    revision: "05e7cc97e40dbd33b0890c35cc0214fcb0547ab5"
+    runtime_profile: groot-n17-droid-v1
+    action_space: joint_position
+    action_dim: 8
+    control_hz: 15
+    max_horizon: 40
+    endpoint: tcp://127.0.0.1:9103
+    backend_options: {adapter: groot_n17}
+    launcher: [/path/to/groot-env/bin/python, -m, colosseum_policy_server.model_service,
+               groot_n17, --checkpoint, /path/to/groot-snapshot,
+               --processor, /path/to/cosmos-processor, --device, cuda, --port, "9103"]
+  - name: lap_3b
+    url: https://huggingface.co/lihzha/LAP-3B
+    revision: "601db9c1ab4bcaf6dddb160c7b2dec589a67b730"
+    runtime_profile: lap-3b-droid-v1
+    action_space: cartesian_position
+    action_dim: 7
+    control_hz: 15
+    max_horizon: 16
+    endpoint: ws://127.0.0.1:9105
+    backend_options: {adapter: lap_3b}
+    launcher: [/path/to/lap-env/bin/python, -m, colosseum_policy_server.model_service,
+               lap_3b, --checkpoint, /path/to/lap-snapshot,
+               --tokenizer, /path/to/paligemma-tokenizer/tokenizer.model, --port, "9105"]
+  - name: g05
+    url: https://huggingface.co/OpenGalaxea/G05
+    revision: "e312be81e90c56a55bcb26b57429bd39a335b449"
+    runtime_profile: g05-droid-v1
+    action_space: joint_position
+    action_dim: 8
+    control_hz: 15
+    max_horizon: 1
+    endpoint: ws://127.0.0.1:9104
+    backend_options: {adapter: g05}
+    launcher: [/path/to/g05-env/bin/python, -m, colosseum_policy_server.model_service,
+               g05, --source-root, /path/to/GalaxeaVLA,
+               --checkpoint, /path/to/g05-snapshot/g05-droid/checkpoints/model_state_dict.pt,
+               --device, cuda, --port, "9104"]
