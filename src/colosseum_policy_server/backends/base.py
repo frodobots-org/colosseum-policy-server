@@ -68,8 +68,9 @@ class LocalModel:
                           and isinstance(options.get("agent_model"), str) and bool(options["agent_model"]))
         legacy = (model.url.startswith("https://huggingface.co/") and len(model.revision) == 40
                   and (local_endpoint or agent_manifest))
-        typed_cloud = (model.model_type == "llm" and model.url in {
-            "https://api.openai.com/v1", "https://api.x.ai/v1", "https://api.anthropic.com/v1"}
+        typed_cloud = (model.model_type == "llm" and identity.scheme == 'https' and bool(identity.hostname)
+            and not any((identity.username, identity.password, identity.query, identity.fragment))
+            and model.name.startswith(('gpt-', 'grok-', 'claude-'))
             and model.endpoint == "inprocess://inspect-agent" and not model.launcher and bool(model.revision.strip()))
         valid_source = typed_cloud if model.model_type == "llm" else (cloud or legacy)
         if (model.model_type not in {"vla", "llm"} or not model.name or not valid_source or not model.action_space or model.action_dim < 1 or model.control_hz < 1 or model.max_horizon < 1):

@@ -315,3 +315,35 @@ async def test_llm_rejects_unimplemented_robot_before_creating_agent(tmp_path, r
     with pytest.raises(ValueError, match='not implemented'):
         await backend.start_session(model(), {'run_id': 'r', 'api_key': 'test', 'robot_type': robot})
     assert backend.agent is None
+
+@pytest.mark.parametrize('provider,name,wire,path', [
+    ('openai','gpt-6-astra','responses','/v1/responses'),
+    ('x-ai','grok-4.7','chat','/v1/chat/completions'),
+    ('anthropic','claude-opus-5-5','messages','/v1/messages'),
+])
+async def test_relay_endpoint_credentials_and_real_inspect(tmp_path, provider, name, wire, path):
+    from colosseum_policy_server.backends.llm_transport import BearerTransport
+    seen=[]
+    def handler(request):
+        assert request.url.host == 'api.yhlxj.ai'
+        assert request.url.path == path
+        assert request.headers['authorization'] == 'Bearer per-session-secret'
+        assert 'x-api-key' not in request.headers
+        if wire == 'responses':
+            assert b'prompt_cache' not in request.content
+        seen.append(json.loads(request.content))
+        return httpx.Response(200,json=response(wire, 'done', {'note':'Test complete'}))
+    def build(**kwargs):
+        custom = kwargs.pop('transport',None)
+        if custom:
+            custom.close()
+            custom=BearerTransport('per-session-secret',httpx.MockTransport(handler))
+        return LLMAgentPolicy(**kwargs,transport=custom or httpx.MockTransport(handler))
+    original=model(provider,name)
+    item=LocalModel.from_mapping({**original.__dict__, 'launcher':[], 'url':'https://api.yhlxj.ai' if provider=='anthropic' else 'https://api.yhlxj.ai/v1', 'backend_options':{'api_auth':'bearer'}})
+    backend=InspectAgentBackend(options(tmp_path),agent_factory=build)
+    await backend.start_session(item, {'api_key':'per-session-secret','run_id':'relay'})
+    actions=await backend.infer(item,observation())
+    assert actions.shape==(1,8)
+    assert seen[0]['model']==name
+    await backend.end_session()

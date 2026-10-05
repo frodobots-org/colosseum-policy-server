@@ -50,13 +50,14 @@ class InspectAgentBackend:
         self.joint_count = self.robot.joint_count
         identity = urlsplit(model.url)
         typed = model.model_type == "llm"
-        urls = {"https://api.openai.com/v1": ("openai", "OPENAI_API_KEY", "gpt-"),
-                "https://api.x.ai/v1": ("x-ai", "XAI_API_KEY", "grok-"),
-                "https://api.anthropic.com/v1": ("anthropic", "ANTHROPIC_API_KEY", "claude-")}
+        providers = {"gpt-": ("openai", "OPENAI_API_KEY"),
+                     "grok-": ("x-ai", "XAI_API_KEY"),
+                     "claude-": ("anthropic", "ANTHROPIC_API_KEY")}
         if typed:
-            provider, key_env, prefix = urls[model.url]
-            if not model.name.startswith(prefix):
-                raise ValueError("LLM model name does not match API endpoint")
+            provider, key_env = next((value for prefix, value in providers.items()
+                                      if model.name.startswith(prefix)), (None, None))
+            if provider is None:
+                raise ValueError("Unsupported LLM model name")
             identity = urlsplit(f"llm://{provider}/{model.name}")
         if model.url.startswith("https://huggingface.co/"):
             identity = urlsplit("llm://" + str(model.backend_options.get("agent_model", "")))
@@ -102,9 +103,30 @@ class InspectAgentBackend:
                 raise ValueError("Client must supply its API key for this LLM")
             # Per-agent credential environment; never mutate process env or
             # fall back to another Client's / the host's provider credentials.
-            kwargs.update(env={key_env: api_key})
-        self.agent = factory(model=f"{identity.netloc}/{identity.path.lstrip('/')}",
-                             wire=wires[identity.netloc], wire_capture=False, **kwargs)
+            base_url = model.url.rstrip("/")
+            # Inspect appends /messages; Anthropic URLs may be supplied at root.
+            if provider == "anthropic" and not urlsplit(base_url).path.strip("/"):
+                base_url += "/v1"
+            kwargs.update(env={key_env: api_key}, base_url=base_url, api_key_env=key_env)
+            auth = settings.get("api_auth", "api_key" if provider == "anthropic" else "bearer")
+            if auth not in {"api_key", "bearer"}:
+                raise ValueError("api_auth must be api_key or bearer")
+            if provider == "anthropic" and auth == "bearer":
+                from .llm_transport import BearerTransport
+                kwargs["transport"] = BearerTransport(api_key)
+        try:
+            self.agent = factory(model=model.name if typed else f"{identity.netloc}/{identity.path.lstrip('/')}",
+                                 wire=settings.get("api_format", wires[identity.netloc]), wire_capture=False, **kwargs)
+            if typed and urlsplit(model.url).hostname != "api.openai.com":
+                # Pinned Inspect enables explicit GPT cache breakpoints by model
+                # name alone. Relays may reject them; keep stateless full history.
+                client = getattr(self.agent, "_client", None)
+                if hasattr(client, "_cache_anchors"):
+                    client._cache_anchors = False
+        except Exception:
+            if "transport" in kwargs:
+                kwargs["transport"].close()
+            raise
 
     @staticmethod
     def _vector(settings, name, size):

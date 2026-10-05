@@ -185,3 +185,30 @@ The script loads your model, connects to the Router, and waits for observations.
 Keep it running while evaluators use your policy. Once the Router matches a
 Client to your Policy Server, each observation is passed to your model and the
 resulting actions are sent back through the Router.
+
+### LLM relay endpoints
+
+For typed `model_type: llm` entries, `url` is the HTTPS API base URL and must
+match the Router deployment. Model names choose defaults: `gpt-*` uses Responses,
+`grok-*` uses Chat Completions, and `claude-*` uses Anthropic Messages. The raw
+model name is sent to the provider (no added `openai/` or `anthropic/` prefix).
+A root Anthropic URL is normalized to `/v1` for the Messages client.
+
+Keys still come from the Client, per trial; no keys belong in this config or
+Router. Optional per-model `backend_options.api_format` accepts Inspect wire
+names `responses`, `chat`, or `messages`. Anthropic defaults to `x-api-key`;
+set `backend_options.api_auth: bearer` for a relay requiring Bearer tokens.
+See `configs/local-runtime-yhlxj.yaml.example`. Copy your existing measured
+robot limits, gripper polarity, camera names, and notes; example null limits
+intentionally prevent execution until configured.
+
+Upgrade Router first, then Client and Policy Server. New Clients report
+`llm_providers` alongside legacy `llm_api_urls`; old Clients remain eligible
+only for matching official URLs. Start a new assignment after switching the
+catalog endpoint. Synthetic API smoke tests do not establish model provenance
+or robot task performance; the tested Grok relay reported `grok-4.7-build`.
+
+The pinned Inspect Responses client automatically adds explicit GPT prompt-cache
+breakpoints. These are disabled for relay hosts because the tested gateway
+rejects them; full conversation history is still sent. Official OpenAI behavior
+is retained. Recheck this compatibility shim when upgrading Inspect.
