@@ -145,6 +145,9 @@ message LocalModelSpec {
   uint32 control_hz = 6;
   uint32 max_horizon = 7;
   optional string subfolder = 8;
+  // Absent means legacy VLA. For LLM, name is the provider API model name.
+  optional string model_type = 9;
+  optional string name = 10;
 }
 message LocalTaskSpec {
   optional string id = 1;
@@ -157,6 +160,8 @@ message LocalTaskSpec {
   repeated string cameras = 8;
 }
 message LocalControl {
+  // Client -> Policy Server only. Never echo, persist, or send to Router.
+  optional string api_key = 20;
   optional bool test = 19;
   string type = 1;
   uint32 protocol_version = 2;

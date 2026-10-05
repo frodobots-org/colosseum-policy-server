@@ -18,6 +18,7 @@ import yaml
 from . import colosseum_pb2 as pb
 from .local_protocol import decode_control, encode_control
 from .backends import LocalModel, PolicyBackend
+from .backends.base import PolicyStopped
 
 
 def load_backend(name: str, options: Mapping[str, Any]) -> PolicyBackend:
@@ -108,6 +109,9 @@ class LocalPolicyRuntime:
             run_id = request["run_id"]
             # Legacy profiles are opaque metadata; subfolder selection is deferred.
             requested_model = {key: value for key, value in request["model"].items() if key not in {"subfolder", "runtime_profile"}}
+            if requested_model.get("model_type", "vla") == "vla":
+                requested_model.pop("model_type", None)
+                requested_model.pop("name", None)
             matches = [model for model in self.config.models.values() if model.public_spec() == requested_model]
             if len(matches) != 1: raise ValueError("unregistered model")
             model = matches[0]
@@ -115,10 +119,25 @@ class LocalPolicyRuntime:
             if verification_only and request.get("test") is not True:
                 raise ValueError("Loopback backend requires test: true")
             async with self.lock:
-                try: await self.supervisor.activate(model)
-                except Exception: print(traceback.format_exc(), flush=True); await self._error(ws, run_id, "MODEL_START_FAILED", "Model startup failed"); return
-                await ws.send(encode_control({"type":"ready", "run_id":run_id, "preparation_id":request.get("preparation_id", ""), "model":dict(request["model"]), "loaded":not verification_only, "verification_only":verification_only}))
-                await self._serve(ws, run_id, model)
+                try:
+                    try:
+                        await self.supervisor.activate(model)
+                        start = getattr(self.backend, "start_session", None)
+                        if start is not None:
+                            try:
+                                await start(model, request)
+                            finally:
+                                request.pop("api_key", None)
+                    except Exception:
+                        print(traceback.format_exc(), flush=True)
+                        await self._error(ws, run_id, "MODEL_START_FAILED", "Model startup failed")
+                        return
+                    await ws.send(encode_control({"type":"ready", "run_id":run_id, "preparation_id":request.get("preparation_id", ""), "model":dict(request["model"]), "loaded":not verification_only, "verification_only":verification_only}))
+                    await self._serve(ws, run_id, model)
+                finally:
+                    end = getattr(self.backend, "end_session", None)
+                    if end is not None:
+                        await end()
         except Exception: print(traceback.format_exc(), flush=True); await self._error(ws, run_id, "INVALID_REQUEST", "Invalid local policy request")
     async def _serve(self, ws, run_id: str, model: LocalModel) -> None:
         sequence = 1
@@ -131,6 +150,9 @@ class LocalPolicyRuntime:
             except Exception: await self._error(ws, run_id, "INVALID_REQUEST", "Invalid local policy request"); return
             try: actions = np.asarray(await asyncio.wait_for(self.backend.infer(model, observation), frame.deadline_ms / 1000), dtype=np.float32)
             except asyncio.TimeoutError: await self._error(ws, run_id, "INFERENCE_TIMEOUT", "Local inference exceeded its deadline"); return
+            except PolicyStopped as exc:
+                await self._error(ws, run_id, "POLICY_STOPPED", f"Agent requested {exc.reason}; operator scoring is required")
+                return
             except Exception: print(traceback.format_exc(), flush=True); await self._error(ws, run_id, "INFERENCE_FAILED", "Local inference failed"); return
             if actions.ndim != 2 or not 1 <= actions.shape[0] <= model.max_horizon or actions.shape[1] != model.action_dim or not np.isfinite(actions).all(): await self._error(ws, run_id, "INVALID_REQUEST", "Backend returned an invalid action array"); return
             plan = pb.ActionPlan(request_sequence=sequence, plan_id=sequence, start_step=observation.control_step, valid_until_step=observation.control_step + len(actions) - 1, control_hz=model.control_hz, actions=pb.Tensor(shape=actions.shape, dtype=pb.FLOAT32, data=actions.tobytes()))

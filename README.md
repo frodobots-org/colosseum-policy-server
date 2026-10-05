@@ -50,6 +50,21 @@ uv run --extra droid colosseum-policy-local --robot droid --config /path/to/droi
 and service endpoint. DROID is included; YAM requires a separately implemented
 backend. Start the model service separately or configure its launcher.
 
+### Use a cloud LLM through Inspect Robots
+
+The optional `inspect_agent` backend runs GPT-6 Astra, Grok 4.7, or Claude
+Opus 5.5 through provider APIs and returns the same Protobuf action plans.
+It needs API credentials and rig bounds, but no GPU or model weights:
+
+```bash
+uv sync --locked --extra agent
+uv run --locked --extra agent colosseum-policy-local --config configs/local-runtime-agent.yaml
+```
+
+Copy and fill in `configs/local-runtime-agent.yaml.example` first. See
+[Inspect Agent setup](docs/inspect-agent.md) for provider configuration,
+existing Router registration, and holding position after an agent stop request.
+
 ## Host a Remote Policy Server
 
 Host your models on your own inference machine so evaluators can use your compute

@@ -146,3 +146,55 @@ def test_robot_cli_selects_backend(tmp_path, monkeypatch, robot):
     monkeypatch.setattr('sys.argv', ['colosseum-policy-local', '--robot', robot, '--config', str(config_path)])
     local_server.main()
     assert selected == [robot]
+
+
+@pytest.mark.parametrize('failure', ['none', 'start', 'infer', 'timeout', 'disconnect'])
+async def test_optional_session_hooks_always_cleanup(tmp_path, failure):
+    events = []
+    class Stateful(Backend):
+        async def start_session(self, item, request):
+            events.append(('start', request['run_id']))
+            if failure == 'start':
+                raise RuntimeError('startup failed')
+        async def infer(self, item, obs):
+            events.append(('infer', obs.control_step))
+            if failure == 'infer':
+                raise RuntimeError('inference failed')
+            if failure == 'timeout':
+                await asyncio.sleep(1)
+            return np.zeros((1, 8))
+        async def end_session(self):
+            events.append(('end',))
+    close = pb.RelayFrame(type=pb.SESSION_CLOSE, session_id='run').SerializeToString()
+    messages = [prepare()] if failure == 'disconnect' else [prepare(), observation(), close]
+    await LocalPolicyRuntime(config(tmp_path), Stateful()).handle(Socket(messages))
+    assert events[0] == ('start', 'run')
+    assert events[-1] == ('end',)
+    assert events.count(('end',)) == 1
+
+
+async def test_session_hook_cleanup_on_handler_cancellation(tmp_path):
+    entered, cleaned = asyncio.Event(), asyncio.Event()
+    class Stateful(Backend):
+        async def start_session(self, item, request):
+            entered.set()
+            await asyncio.Future()
+        async def end_session(self):
+            cleaned.set()
+    runtime = LocalPolicyRuntime(config(tmp_path), Stateful())
+    task = asyncio.create_task(runtime.handle(Socket([prepare()])))
+    await entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert cleaned.is_set() and not runtime.lock.locked()
+
+
+def test_cloud_identity_does_not_relax_legacy_validation():
+    from dataclasses import asdict
+    row = asdict(model())
+    for change in ({'revision': 'alias'}, {'endpoint': 'https://api.openai.com/v1'},
+                   {'url': 'llm://unknown/model', 'endpoint': 'inprocess://inspect-agent'},
+                   {'url': 'llm://openai/gpt-6-astra', 'endpoint': 'inprocess://inspect-agent', 'launcher': ['bad']}):
+        with pytest.raises(ValueError):
+            LocalModel.from_mapping({**row, 'launcher': [], **change})
