@@ -3,7 +3,7 @@
 host: 127.0.0.1
 port: 8000
 backend:
-  name: inspect_agent
+  # Omit name to select VLA or LLM automatically from the assigned model.
   options:
     # REQUIRED: replace nulls with the limits and polarity of your actual rig.
     # Seven joint angles in radians; seven maximum changes per control step.

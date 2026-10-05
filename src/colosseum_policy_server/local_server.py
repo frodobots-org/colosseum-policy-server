@@ -29,8 +29,8 @@ def configured_runtime(path: str, robot: str | None = None) -> RuntimeConfig:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Serve registered local VLA models over Local Protocol v1")
-    parser.add_argument("--config", required=True, help="YAML local runtime configuration")
+    parser = argparse.ArgumentParser(description="Serve registered VLA and LLM models over Local Protocol v1")
+    parser.add_argument("--config", default="configs/local-runtime.yaml", help="YAML local runtime configuration (default: configs/local-runtime.yaml)")
     parser.add_argument("--robot", metavar="ROBOT", help="Select an installed robot backend (for example droid or yam)")
     args = parser.parse_args()
     try:

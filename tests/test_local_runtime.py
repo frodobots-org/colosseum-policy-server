@@ -198,3 +198,19 @@ def test_cloud_identity_does_not_relax_legacy_validation():
                    {'url': 'llm://openai/gpt-6-astra', 'endpoint': 'inprocess://inspect-agent', 'launcher': ['bad']}):
         with pytest.raises(ValueError):
             LocalModel.from_mapping({**row, 'launcher': [], **change})
+
+
+@pytest.mark.parametrize('backend', [None, {}, {'options': {'external_sensor': 'front'}}])
+def test_config_defaults_to_auto_backend(tmp_path, backend):
+    from dataclasses import asdict
+    import yaml
+    row = asdict(model())
+    row['launcher'] = list(row['launcher'])
+    raw = {'models': [row]}
+    if backend is not None:
+        raw['backend'] = backend
+    path = tmp_path / 'runtime.yaml'
+    path.write_text(yaml.safe_dump(raw))
+    cfg = RuntimeConfig.from_yaml(path)
+    assert cfg.backend_name == 'auto'
+    assert cfg.backend_options == (backend or {}).get('options', {})

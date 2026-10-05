@@ -1,5 +1,5 @@
 """Dispatch registered model types without changing existing VLA adapters."""
-from .droid import DroidBackend
+from .vla import VLABackend
 from .inspect_agent import InspectAgentBackend
 
 
@@ -8,11 +8,15 @@ class AutoBackend:
         self.options, self.active = dict(options), None
 
     async def start_session(self, model, request):
-        if model.model_type == 'llm':
-            self.active = InspectAgentBackend(self.options.get('llm', {}))
+        if self.active is not None:
+            raise RuntimeError('Previous model session has not closed')
+        shared = {key: value for key, value in self.options.items() if key not in {'llm', 'vla'}}
+        if model.model_type == 'llm' or model.endpoint == 'inprocess://inspect-agent':
+            self.active = InspectAgentBackend({**shared, **self.options.get('llm', {})})
             await self.active.start_session(model, request)
         else:
-            self.active = DroidBackend(self.options.get('vla', {}))
+            self.active = VLABackend({**shared, **self.options.get('vla', {})})
+            await self.active.start_session(model, request)
 
     async def infer(self, model, observation):
         if self.active is None:

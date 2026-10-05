@@ -277,14 +277,41 @@ async def test_byok_no_host_fallback_and_no_cross_session_leak(tmp_path, monkeyp
 
 async def test_auto_backend_routes_types(tmp_path):
     from colosseum_policy_server.backends.auto import AutoBackend
-    from colosseum_policy_server.backends.droid import DroidBackend
+    from colosseum_policy_server.backends.vla import VLABackend
     backend = AutoBackend({'llm': options(tmp_path)})
     legacy = LocalModel.from_mapping(dict(name='vla', url='https://huggingface.co/org/model',
         revision='a'*40, action_space='joint_position', action_dim=8, control_hz=15,
-        max_horizon=2, endpoint='http://127.0.0.1:9100'))
+        max_horizon=2, endpoint='http://127.0.0.1:9100', backend_options={'adapter': 'molmoact2'}))
     await backend.start_session(legacy, {})
-    assert isinstance(backend.active, DroidBackend)
+    assert isinstance(backend.active, VLABackend)
     await backend.end_session()
     await backend.start_session(model(), {'run_id': 'r', 'api_key': 'test'})
     assert isinstance(backend.active, InspectAgentBackend)
     await backend.end_session()
+
+
+async def test_auto_flat_options_and_session_switch(tmp_path):
+    from colosseum_policy_server.backends.auto import AutoBackend
+    backend = AutoBackend({**options(tmp_path), 'external_sensor': 'front',
+                           'llm': {'robot_notes': 'LLM override'}})
+    await backend.start_session(model(), {'run_id': 'r', 'api_key': 'test'})
+    assert backend.active.docs.startswith('LLM override')
+    assert backend.active.low.tolist() == [-1.] * 7
+    with pytest.raises(RuntimeError, match='has not closed'):
+        await backend.start_session(model(), {'run_id': 'r2', 'api_key': 'test'})
+    await backend.end_session()
+    legacy = LocalModel.from_mapping(dict(name='vla', url='https://huggingface.co/org/model',
+        revision='a'*40, action_space='joint_position', action_dim=8, control_hz=15,
+        max_horizon=2, endpoint='http://127.0.0.1:9100', backend_options={'adapter': 'molmoact2'}))
+    await backend.start_session(legacy, {})
+    assert backend.active.active.external_sensor == 'front'
+    await backend.end_session()
+    assert backend.active is None
+
+
+@pytest.mark.parametrize('robot', ['yam', 'so101'])
+async def test_llm_rejects_unimplemented_robot_before_creating_agent(tmp_path, robot):
+    backend = InspectAgentBackend(options(tmp_path))
+    with pytest.raises(ValueError, match='not implemented'):
+        await backend.start_session(model(), {'run_id': 'r', 'api_key': 'test', 'robot_type': robot})
+    assert backend.agent is None

@@ -12,8 +12,8 @@ provider charges. This backend currently supports only 8-D `joint_position`
 From the Policy Server checkout:
 
 ```bash
-uv sync --locked --extra agent
-cp configs/local-runtime-agent.yaml.example configs/local-runtime-agent.yaml
+uv sync --locked --extra agent --extra droid
+cp configs/local-runtime-agent.yaml.example configs/local-runtime.yaml
 ```
 
 The optional extra pins Inspect core and Agent to Git commit
@@ -31,17 +31,25 @@ or evidence that a particular real-world trajectory is safe.
 Start the server after configuring the rig:
 
 ```bash
-uv run --locked --extra agent colosseum-policy-local \
-  --config configs/local-runtime-agent.yaml
+.venv/bin/colosseum-policy-local
 ```
 
-Do not pass `--robot droid`: that overrides the selected backend. For one
-runtime serving existing DROID VLAs and cloud LLMs, install both extras and
-use `backend.name: auto`. Put rig/agent options under `backend.options.llm`
-and existing DROID backend options under `backend.options.vla`. Model-specific
-VLA adapters and launchers remain in each model's existing configuration.
-The model catalog still needs to be registered locally; Router assignments
-must match it exactly. This does not allow arbitrary peer-selected endpoints.
+With no `backend.name`, the runtime automatically dispatches each assigned
+model: LLMs use Inspect and VLAs use the VLA runtime with a registered model adapter. The default configuration path is
+`configs/local-runtime.yaml`; `--config` can select another file. Install the
+extras once as above; the direct executable keeps those installed dependencies.
+
+Client sends its `robot_type` directly in preparation. Inference adapters check
+robot compatibility; the Client alone owns hardware drivers. Existing built-in
+model adapters and the LLM robot contract support Franka. Other robots require
+implemented adapters; they never silently fall back to Franka.
+
+Flat `backend.options` are shared; optional `llm` and `vla` mappings override
+them for each type. Existing explicitly named backends and `--robot` overrides
+remain supported. Leave `--robot` unset for automatic dispatch. To serve a
+mixed evaluation, include both VLA and LLM entries in `models`, retaining each
+VLA's adapter, endpoint and launcher. Automatic dispatch does not download or
+configure unregistered models. Router assignments must match the catalog.
 
 ## Unified model descriptor
 

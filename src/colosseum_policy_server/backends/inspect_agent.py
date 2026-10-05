@@ -16,7 +16,8 @@ from uuid import uuid4
 import numpy as np
 
 from .base import LocalModel
-from .droid import _rgb, _state
+from ..model_adapters.observation import _rgb, _state
+from ..model_adapters.robots import session_robot, llm_robot_contract
 
 
 def create_backend(options: Mapping[str, Any]) -> "InspectAgentBackend":
@@ -43,9 +44,10 @@ class InspectAgentBackend:
     async def start_session(self, model: LocalModel, request: Mapping[str, Any]) -> None:
         if self.agent is not None or self._inflight is not None:
             raise RuntimeError("previous agent session has not closed")
-        if model.action_space != "joint_position" or model.action_dim != 8:
-            raise ValueError("inspect_agent requires DROID 8-D joint_position")
         settings = {**self.options, **model.backend_options}
+        self.robot = llm_robot_contract(session_robot(model, request, self.options))
+        self.robot.validate(model)
+        self.joint_count = self.robot.joint_count
         identity = urlsplit(model.url)
         typed = model.model_type == "llm"
         urls = {"https://api.openai.com/v1": ("openai", "OPENAI_API_KEY", "gpt-"),
@@ -61,9 +63,9 @@ class InspectAgentBackend:
         wires = {"openai": "responses", "x-ai": "chat", "anthropic": "messages"}
         if identity.scheme != "llm" or identity.netloc not in wires or model.endpoint != "inprocess://inspect-agent":
             raise ValueError("inspect_agent requires an llm://provider/model identity")
-        self.low = self._vector(settings, "joint_low", 7)
-        self.high = self._vector(settings, "joint_high", 7)
-        self.max_step = self._vector(settings, "joint_max_step", 7)
+        self.low = self._vector(settings, "joint_low", self.joint_count)
+        self.high = self._vector(settings, "joint_high", self.joint_count)
+        self.max_step = self._vector(settings, "joint_max_step", self.joint_count)
         if np.any(self.low >= self.high) or np.any(self.max_step <= 0):
             raise ValueError("joint bounds must increase and joint_max_step must be positive")
         self.open_value = settings.get("gripper_open_value")
@@ -134,7 +136,7 @@ class InspectAgentBackend:
 
         if not observation.instruction.strip() or observation.control_step <= self.last_step:
             raise ValueError("instruction must be nonempty and control_step must advance")
-        joints = _state(observation, "joint_position", (7,)).astype(np.float64)
+        joints = _state(observation, self.robot.state_key, (self.joint_count,)).astype(np.float64)
         gripper = _state(observation, "gripper_position", (1,)).astype(np.float64)
         if np.any(joints < self.low) or np.any(joints > self.high) or np.any(gripper < 0) or np.any(gripper > 1):
             raise ValueError("observed state is outside the configured rig bounds")
@@ -147,13 +149,13 @@ class InspectAgentBackend:
         if not self.bound:
             cameras = tuple(CameraSpec(name, img.shape[0], img.shape[1]) for name, img in images.items())
             self.agent.bind(EmbodimentInfo(
-                name="droid", control_hz=self.model.control_hz,
-                action_space=Box(shape=(8,), low=np.r_[self.low, 0.], high=np.r_[self.high, 1.],
+                name=self.robot.name, control_hz=self.model.control_hz,
+                action_space=Box(shape=(self.robot.action_dim,), low=np.r_[self.low, 0.], high=np.r_[self.high, 1.],
                     semantics=ActionSemantics(control_mode="joint_pos", gripper="binary",
-                        dim_labels=tuple(f"joint{i + 1}" for i in range(7)) + ("gripper",),
+                        dim_labels=tuple(f"joint{i + 1}" for i in range(self.joint_count)) + ("gripper",),
                         max_step=tuple(self.max_step) + (1.,))),
                 observation_space=ObservationSpace(cameras=cameras,
-                    state=StateSpec((StateField("joint_pos", (8,), "rad+normalized"),))),
+                    state=StateSpec((StateField("joint_pos", (self.robot.action_dim,), "rad+normalized"),))),
                 docs=self.docs + "\nThe final dimension is gripper: 0 closed, 1 open. "
                     "Motion may be truncated to max_horizon; use the next measured state to replan.",
             ))
@@ -175,29 +177,29 @@ class InspectAgentBackend:
             grip = float(gripper[0] > .5)
             if self.last_actions is not None:
                 executed = min(observation.control_step - self.last_step, len(self.last_actions))
-                grip = float(self.last_actions[executed - 1, 7])
+                grip = float(self.last_actions[executed - 1, -1])
             self.hold_target = np.r_[joints, grip].astype(np.float32)
             return self._hold(joints, observation.control_step)
         if chunk.control_hz is not None and chunk.control_hz != self.model.control_hz:
             raise ValueError("agent returned a different control frequency")
         actions = np.asarray([action.data for action in chunk.actions], dtype=np.float64)
-        if actions.ndim != 2 or actions.shape[1] != 8 or not len(actions) or not np.isfinite(actions).all():
+        if actions.ndim != 2 or actions.shape[1] != self.robot.action_dim or not len(actions) or not np.isfinite(actions).all():
             raise ValueError("agent returned malformed actions")
         if np.any(actions < np.r_[self.low, 0.]) or np.any(actions > np.r_[self.high, 1.]):
             raise ValueError("agent actions exceed rig bounds")
-        if np.any(np.abs(np.diff(np.vstack((position, actions)), axis=0)[:, :7]) > self.max_step + 1e-7):
+        if np.any(np.abs(np.diff(np.vstack((position, actions)), axis=0)[:, :self.joint_count]) > self.max_step + 1e-7):
             raise ValueError("agent actions exceed per-step joint limits")
         # Match the existing client's binary gripper execution, including polarity.
-        actions[:, 7] = (actions[:, 7] > .5).astype(float)
+        actions[:, -1] = (actions[:, -1] > .5).astype(float)
         if self.open_value == 0:
-            actions[:, 7] = 1 - actions[:, 7]
+            actions[:, -1] = 1 - actions[:, -1]
         self.last_step = observation.control_step
         self.last_actions = actions[:self.model.max_horizon].astype(np.float32)
         return self.last_actions.copy()
 
     def _hold(self, joints, control_step):
         """Repeat one fixed target while retaining the per-step motion guard."""
-        if np.any(np.abs(self.hold_target[:7].astype(np.float64) - joints) > self.max_step + 1e-7):
+        if np.any(np.abs(self.hold_target[:self.joint_count].astype(np.float64) - joints) > self.max_step + 1e-7):
             raise ValueError("hold target exceeds per-step joint limits from measured state")
         self.last_step = control_step
         return self.hold_target[None, :].copy()
@@ -226,6 +228,7 @@ class InspectAgentBackend:
             agent.on_trial_end(record, str(self.log_dir), self.log_id)
             (self.log_dir / f"{self.log_id}.json").write_text(json.dumps({
                 "run_id": self.run_id, "model": self.model.public_spec(),
+                "robot_type": self.robot.name,
                 "stop_reason": self.stop_reason, "stop_step": self.stop_step,
                 "stop_detail": self.stop_detail,
                 "hold_target": self.hold_target.tolist() if self.hold_target is not None else None,

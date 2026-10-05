@@ -33,22 +33,26 @@ is performed.
 
 ### Run a Real Robot Policy Server
 
-Install your robot's backend and model service, then start the server with your
-model configuration:
+Install the DROID and LLM adapters once:
 
 ```bash
-uv run colosseum-policy-local --robot <robot> --config /path/to/policy.yaml
+uv sync --extra droid --extra agent
 ```
 
-For example, using the DROID backend:
+Put your registered models and rig settings in `configs/local-runtime.yaml`,
+then start:
 
 ```bash
-uv run --extra droid colosseum-policy-local --robot droid --config /path/to/droid-policy.yaml
+.venv/bin/colosseum-policy-local
 ```
 
-`--robot` selects the installed backend. The configuration specifies the model
-and service endpoint. DROID is included; YAM requires a separately implemented
-backend. Start the model service separately or configure its launcher.
+Omit `backend.name` to automatically choose VLA inference or Inspect LLM
+inference from the assigned model. VLA inference selects its model adapter using
+`backend_options.adapter`; it does not select a hardware driver. Both model types must be registered in the configuration.
+VLA model services still need their weights and dependencies; start them
+separately or configure their launchers. Use `--config /path/to/policy.yaml`
+for a different configuration. Explicit `backend.name` and `--robot` remain
+available for existing setups and custom robot backends.
 
 ### Use a cloud LLM through Inspect Robots
 
@@ -61,7 +65,9 @@ uv sync --locked --extra agent
 uv run --locked --extra agent colosseum-policy-local --config configs/local-runtime-agent.yaml
 ```
 
-Copy and fill in `configs/local-runtime-agent.yaml.example` first. See
+Copy and fill in `configs/local-runtime-agent.yaml.example` first.
+See [inference architecture](docs/inference-architecture.md) for robot/model
+compatibility and mixed VLA/LLM setup. See
 [Inspect Agent setup](docs/inspect-agent.md) for provider configuration,
 existing Router registration, and holding position after an agent stop request.
 

@@ -40,9 +40,9 @@ class RuntimeConfig:
     @classmethod
     def from_yaml(cls, path: str | Path) -> "RuntimeConfig":
         raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-        backend = raw.get("backend") if isinstance(raw, Mapping) else None
-        if not isinstance(backend, Mapping) or not isinstance(backend.get("name"), str) or not isinstance(backend.get("options", {}), Mapping):
-            raise ValueError("runtime config requires backend.name and backend.options")
+        backend = raw.get("backend", {}) if isinstance(raw, Mapping) else None
+        if not isinstance(backend, Mapping) or not isinstance(backend.get("name", "auto"), str) or not isinstance(backend.get("options", {}), Mapping):
+            raise ValueError("runtime backend must contain a string name and mapping options")
         host, port = str(raw.get("host", "127.0.0.1")), raw.get("port", 8000)
         try: is_loopback = ipaddress.ip_address(host).is_loopback
         except ValueError: is_loopback = host == "localhost"
@@ -57,7 +57,7 @@ class RuntimeConfig:
         timeout = raw.get("start_timeout_seconds", 180)
         if type(timeout) is not int or timeout < 1:
             raise ValueError("start_timeout_seconds must be positive")
-        return cls(host, port, backend["name"], dict(backend.get("options", {})), Path(str(raw.get("log_dir", "local-policy-logs"))), timeout, {model.name: model for model in models})
+        return cls(host, port, backend.get("name", "auto"), dict(backend.get("options", {})), Path(str(raw.get("log_dir", "local-policy-logs"))), timeout, {model.name: model for model in models})
 
 
 class LocalServiceSupervisor:

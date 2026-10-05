@@ -1,19 +1,65 @@
+# API keys come from the Client for each trial; never put them here.
+# No GPU, downloaded weights, or local model service required.
 host: 127.0.0.1
 port: 8000
 backend:
-  name: example
-  options: {}
-log_dir: local-policy-logs
-start_timeout_seconds: 180
+  # Omit name to select VLA or LLM automatically from the assigned model.
+  options:
+    # REQUIRED: replace nulls with the limits and polarity of your actual rig.
+    # Seven joint angles in radians; seven maximum changes per control step.
+    joint_low: null
+    joint_high: null
+    joint_max_step: null
+    # RobotEnv command meaning: 0 if 0=open, or 1 if 1=open.
+    gripper_open_value: null
+    robot_notes: "Describe the joint directions, home pose, camera views, and workspace."
+    sensors: [head_image, left_image]
+    effort: low
+    max_llm_calls: 30
+    max_retries: 1
+    max_speed_frac: 0.1
+    log_dir: agent-logs
 models:
-  - name: example-model
-    url: https://huggingface.co/example/model
-    revision: "0000000000000000000000000000000000000000"
-    subfolder: ""
+  # The model descriptors must exactly match the Router catalog.
+  - name: gpt-6-astra
+    model_type: llm
+    url: https://api.openai.com/v1
+    revision: rig-v1
     action_space: joint_position
     action_dim: 8
     control_hz: 15
-    max_horizon: 1
-    endpoint: ws://127.0.0.1:9100
-    launcher: []
-    backend_options: {}
+    max_horizon: 150
+    endpoint: inprocess://inspect-agent
+  - name: grok-4.7
+    model_type: llm
+    url: https://api.x.ai/v1
+    revision: "4.7"
+    action_space: joint_position
+    action_dim: 8
+    control_hz: 15
+    max_horizon: 150
+    endpoint: inprocess://inspect-agent
+  - name: claude-opus-5-5
+    model_type: llm
+    url: https://api.anthropic.com/v1
+    revision: rig-v1
+    action_space: joint_position
+    action_dim: 8
+    control_hz: 15
+    max_horizon: 150
+    endpoint: inprocess://inspect-agent
+  # Example VLA entry: replace URL/revision/contract with your Router registration.
+  # Start the actual model service separately, or add its launcher here.
+  - name: example-molmo
+    model_type: vla
+    url: https://huggingface.co/example/model
+    revision: "0000000000000000000000000000000000000000"
+    action_space: joint_position
+    action_dim: 8
+    control_hz: 15
+    max_horizon: 15
+    endpoint: http://127.0.0.1:9100
+    backend_options:
+      robot_type: franka
+      adapter: molmoact2
+      num_steps: 10
