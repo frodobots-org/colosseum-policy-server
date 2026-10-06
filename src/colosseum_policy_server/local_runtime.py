@@ -5,6 +5,7 @@ import asyncio
 from dataclasses import dataclass
 from importlib import metadata
 import ipaddress
+import json
 from pathlib import Path
 import socket
 import time
@@ -94,6 +95,43 @@ class LocalServiceSupervisor:
 
 
 class LocalPolicyRuntime:
+    progress_interval = 10.0
+
+    @staticmethod
+    def _progress(event, run_id, model, **details):
+        print(json.dumps(dict(event=event, run_id=run_id, model=model.name,
+                              **details)), flush=True)
+
+    async def _infer_with_progress(self, run_id, model, observation, deadline_ms):
+        started = time.monotonic()
+        details = dict(step=observation.control_step, deadline_ms=deadline_ms)
+        self._progress('inference_start', run_id, model, **details)
+
+        async def heartbeat():
+            while True:
+                await asyncio.sleep(self.progress_interval)
+                self._progress('inference_waiting', run_id, model, **details,
+                               elapsed_s=round(time.monotonic() - started, 2))
+
+        reporter = asyncio.create_task(heartbeat())
+        try:
+            result = await asyncio.wait_for(self.backend.infer(model, observation), deadline_ms / 1000)
+        except BaseException as exc:
+            self._progress('inference_failed', run_id, model, **details,
+                           elapsed_s=round(time.monotonic() - started, 2),
+                           error_type=type(exc).__name__)
+            raise
+        else:
+            self._progress('inference_returned', run_id, model, **details,
+                           elapsed_s=round(time.monotonic() - started, 2))
+            return result
+        finally:
+            reporter.cancel()
+            try:
+                await reporter
+            except asyncio.CancelledError:
+                pass
+
     def __init__(self, config: RuntimeConfig, backend: PolicyBackend | None = None, supervisor: LocalServiceSupervisor | None = None):
         self.config, self.backend, self.supervisor, self.lock = config, backend or load_backend(config.backend_name, config.backend_options), supervisor or LocalServiceSupervisor(config), asyncio.Lock()
     async def _error(self, ws, run_id: str, code: str, message: str) -> None:
@@ -119,6 +157,7 @@ class LocalPolicyRuntime:
             if verification_only and request.get("test") is not True:
                 raise ValueError("Loopback backend requires test: true")
             async with self.lock:
+                self._progress('model_start', run_id, model)
                 try:
                     try:
                         await self.supervisor.activate(model)
@@ -133,6 +172,7 @@ class LocalPolicyRuntime:
                         await self._error(ws, run_id, "MODEL_START_FAILED", "Model startup failed")
                         return
                     await ws.send(encode_control({"type":"ready", "run_id":run_id, "preparation_id":request.get("preparation_id", ""), "model":dict(request["model"]), "loaded":not verification_only, "verification_only":verification_only}))
+                    self._progress('model_ready', run_id, model)
                     await self._serve(ws, run_id, model)
                 finally:
                     end = getattr(self.backend, "end_session", None)
@@ -148,7 +188,7 @@ class LocalPolicyRuntime:
                 if frame.type != pb.OBSERVATION or frame.session_id != run_id or frame.sequence != sequence or frame.deadline_ms < 1: raise ValueError("invalid observation")
                 observation = pb.Observation.FromString(frame.payload)
             except Exception: await self._error(ws, run_id, "INVALID_REQUEST", "Invalid local policy request"); return
-            try: actions = np.asarray(await asyncio.wait_for(self.backend.infer(model, observation), frame.deadline_ms / 1000), dtype=np.float32)
+            try: actions = np.asarray(await self._infer_with_progress(run_id, model, observation, frame.deadline_ms), dtype=np.float32)
             except asyncio.TimeoutError: await self._error(ws, run_id, "INFERENCE_TIMEOUT", "Local inference exceeded its deadline"); return
             except PolicyStopped as exc:
                 await self._error(ws, run_id, "POLICY_STOPPED", f"Agent requested {exc.reason}; operator scoring is required")

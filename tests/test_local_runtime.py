@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import numpy as np
 import pytest
@@ -40,6 +41,26 @@ class Backend:
 
 class FailingSupervisor:
     async def activate(self, model): raise RuntimeError("private launcher detail")
+
+
+@pytest.mark.parametrize('fails', [False, True])
+async def test_progress_reports_wait_and_stops_after_inference(tmp_path, capsys, fails):
+    backend = Backend(result=np.zeros((1, 8)), delay=.03,
+                      error=RuntimeError('secret-value') if fails else None)
+    runtime = LocalPolicyRuntime(config(tmp_path), backend)
+    runtime.progress_interval = .005
+    try:
+        await runtime._infer_with_progress('run', model(), pb.Observation(control_step=7), 1000)
+    except RuntimeError:
+        assert fails
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert rows[0]['event'] == 'inference_start'
+    assert any(row['event'] == 'inference_waiting' for row in rows)
+    assert rows[-1]['event'] == ('inference_failed' if fails else 'inference_returned')
+    assert all(row['step'] == 7 and row['model'] == 'test' for row in rows)
+    assert 'secret-value' not in json.dumps(rows)
+    await asyncio.sleep(.015)
+    assert capsys.readouterr().out == ''
 
 
 async def test_start_failure_is_sanitized(tmp_path):
