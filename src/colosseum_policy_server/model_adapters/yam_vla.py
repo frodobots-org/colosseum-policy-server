@@ -1,4 +1,4 @@
-"""MolmoAct2-BimanualYAM HTTP /act adapter (upstream json_numpy protocol)."""
+"""YAM MolmoAct2/GR00T HTTP /act adapter (upstream json_numpy protocol)."""
 import asyncio
 import json
 from collections.abc import Mapping
@@ -19,15 +19,15 @@ class YAMVLAAdapter:
         self.timeout = _positive_float(options.get('http_timeout_seconds', 30), 'http_timeout_seconds')
 
     def validate(self, model):
-        if (model.backend_options.get('adapter') != 'molmoact2_yam'
+        if (model.backend_options.get('adapter') not in {'molmoact2_yam', 'groot_yam'}
                 or model.action_space != 'joint_position' or model.action_dim != 14
                 or model.control_hz != 30):
-            raise ValueError('MolmoAct2 YAM requires 14-D joint_position at 30 Hz')
+            raise ValueError('YAM VLA requires 14-D joint_position at 30 Hz')
         steps = model.backend_options.get('num_steps', 10)
         if type(steps) is not int or not 1 <= steps <= 10:
             raise ValueError('num_steps must be an integer in [1, 10]')
         if not model.endpoint.startswith(('http://', 'https://')):
-            raise ValueError('MolmoAct2 YAM requires an HTTP endpoint')
+            raise ValueError('YAM VLA requires an HTTP endpoint')
 
     async def infer(self, model, observation):
         self.validate(model)

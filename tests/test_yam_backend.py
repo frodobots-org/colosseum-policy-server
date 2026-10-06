@@ -28,7 +28,8 @@ def observation():
 
 
 @pytest.mark.asyncio
-async def test_http_roundtrip_and_vla_routing(tmp_path):
+@pytest.mark.parametrize("adapter,horizon", [("molmoact2_yam", 30), ("groot_yam", 16)])
+async def test_http_roundtrip_and_vla_routing(tmp_path, adapter, horizon):
     class Runtime:
         action_dim = 14
         image_keys = ('top_cam', 'left_cam', 'right_cam')
@@ -36,16 +37,17 @@ async def test_http_roundtrip_and_vla_routing(tmp_path):
             np.testing.assert_array_equal(payload['state'], [0,1,2,3,4,5,.25,6,7,8,9,10,11,.75])
             assert [payload[key][0,0,0] for key in self.image_keys] == [0,1,2]
             assert payload['instruction'] == 'pick'
-            return {'actions': np.tile(payload['state'], (30, 1))}
+            return {'actions': np.tile(payload['state'], (horizon, 1))}
     server = HTTPServer(('127.0.0.1', 0), http_handler(Runtime()))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     backend = VLABackend({})
-    item = model(f'http://127.0.0.1:{server.server_port}')
+    item = replace(model(f'http://127.0.0.1:{server.server_port}'), max_horizon=horizon,
+                   backend_options={'adapter': adapter, 'robot_type': 'yam'})
     try:
         await backend.start_session(item, {'robot_type': 'yam'})
         actions = await backend.infer(item, observation())
-        assert actions.shape == (30,14)
+        assert actions.shape == (horizon,14)
         assert actions[0,6] == .25 and actions[0,13] == .75
         await backend.end_session()
         from colosseum_policy_server.local_runtime import LocalPolicyRuntime, RuntimeConfig
@@ -67,7 +69,7 @@ async def test_http_roundtrip_and_vla_routing(tmp_path):
                 frame = pb.RelayFrame.FromString(await ws.recv())
                 assert frame.type == pb.ACTION_PLAN
                 plan = pb.ActionPlan.FromString(frame.payload)
-                assert list(plan.actions.shape) == [30, 14] and plan.control_hz == 30
+                assert list(plan.actions.shape) == [horizon, 14] and plan.control_hz == 30
                 await ws.send(pb.RelayFrame(protocol_version=1, type=pb.SESSION_CLOSE,
                     session_id='yam-run').SerializeToString())
     finally:
@@ -100,3 +102,29 @@ async def test_missing_camera_and_wrong_state_rejected_before_network():
     obs.state['joint_position'].CopyFrom(tensor_from_numpy(np.zeros(7, np.float32)))
     with pytest.raises(ValueError):
         await backend.infer(model(), obs)
+
+
+def test_synthetic_worker_check_command():
+    import subprocess
+    import sys
+    from pathlib import Path
+    class Runtime:
+        action_dim = 14
+        image_keys = ('top_cam', 'left_cam', 'right_cam')
+        def infer(self, payload):
+            assert payload['top_cam'].shape == (480, 640, 3)
+            return {'actions': np.tile(payload['state'], (16, 1))}
+    server = HTTPServer(('127.0.0.1', 0), http_handler(Runtime()))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        script = Path(__file__).parents[1] / 'scripts/check_yam_worker.py'
+        result = subprocess.run([sys.executable, str(script), '--endpoint',
+            f'http://127.0.0.1:{server.server_port}', '--max-horizon', '16'],
+            capture_output=True, text=True, timeout=15)
+        assert result.returncode == 0, result.stderr
+        assert 'PASS: shape=(16, 14)' in result.stdout
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()

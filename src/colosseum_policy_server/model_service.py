@@ -24,11 +24,12 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("model", choices=["molmoact2", "pi05_lerobot", "groot_n17", "lap_3b", "g05"])
     parser.add_argument("--robot-type", choices=["franka", "yam"], default="franka",
-                        help="MolmoAct2 embodiment (default: franka)")
+                        help="MolmoAct2/GR00T embodiment (default: franka)")
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--tokenizer", type=Path)
     parser.add_argument("--stats", type=Path)
     parser.add_argument("--processor", type=Path)
+    parser.add_argument("--base-model", type=Path, help="local GR00T N1.7 base snapshot for LeRobot YAM")
     parser.add_argument("--source-root", type=Path, help="installed G05 upstream source checkout")
     parser.add_argument("--host", default="127.0.0.1", choices=["127.0.0.1", "localhost"])
     parser.add_argument("--port", type=int, required=True)
@@ -41,15 +42,17 @@ def parse_args(argv=None):
     args = parser.parse_args(argv)
     if not 1 <= args.port <= 65535 or not 1 <= args.num_steps <= 10:
         parser.error("port must be valid and --num-steps must be in [1, 10]")
-    if args.robot_type != "franka" and args.model != "molmoact2":
-        parser.error("--robot-type yam is implemented only for molmoact2")
+    if args.robot_type != "franka" and args.model not in {"molmoact2", "groot_n17"}:
+        parser.error("--robot-type yam is implemented only for molmoact2 and groot_n17")
     required = {"molmoact2": [], "pi05_lerobot": ["tokenizer", "stats"],
                 "groot_n17": ["processor"], "lap_3b": ["tokenizer"], "g05": ["source_root"]}
+    if args.model == "groot_n17" and args.robot_type == "yam":
+        required["groot_n17"] = ["processor", "base_model"]
     for key in ["checkpoint", *required[args.model]]:
         path = getattr(args, key)
         if path is None or not path.exists():
             parser.error(f"--{key.replace('_', '-')} must point to an existing local asset")
-    for key in ("checkpoint", "tokenizer", "stats", "processor", "source_root"):
+    for key in ("checkpoint", "tokenizer", "stats", "processor", "source_root", "base_model"):
         path = getattr(args, key)
         if path is not None:
             setattr(args, key, path.resolve())
@@ -63,7 +66,9 @@ def parse_args(argv=None):
     if args.model == "pi05_lerobot" and (not args.tokenizer.is_dir() or not args.stats.is_file()):
         parser.error("pi05 needs a tokenizer directory and a statistics JSON file")
     if args.model == "groot_n17" and not args.processor.is_dir():
-        parser.error("GR00T --processor must be a local Cosmos processor directory")
+        parser.error("GR00T --processor must be a local processor directory")
+    if args.model == "groot_n17" and args.robot_type == "yam" and not args.base_model.is_dir():
+        parser.error("--base-model must be a local directory")
     return args
 
 
@@ -111,13 +116,13 @@ def http_handler(runtime):
                 for key in (*getattr(runtime, "image_keys", ("external_cam", "wrist_cam")), "state"):
                     payload[key] = _json_decode(payload[key], max_values=MAX_REQUEST_BYTES)
             except Exception:
-                log.exception("Invalid Molmo request")
+                log.exception("Invalid model request")
                 self.reply(400, {"error": "Invalid model request"})
                 return
             try:
                 response = _infer(runtime, payload)
             except Exception:
-                log.exception("Molmo inference failed")
+                log.exception("Model inference failed")
                 self.reply(500, {"error": "Model inference failed"})
                 return
             self.reply(200, response)
@@ -198,6 +203,13 @@ def main(argv=None):
                                            device=args.device, num_steps=args.num_steps)
         asyncio.run(serve_pi05(runtime, args.host, args.port, args.num_steps))
     elif args.model == "groot_n17":
+        if args.robot_type == "yam":
+            from .yam_groot import GrootYAMRuntime
+            runtime = GrootYAMRuntime(args.checkpoint, base_model=args.base_model,
+                                      processor=args.processor, device=args.device)
+            with HTTPServer((args.host, args.port), http_handler(runtime)) as server:
+                server.serve_forever()
+            return
         policy = model_loading.load_groot(args.checkpoint, device=args.device, processor=args.processor)
         from gr00t.policy.server_client import PolicyServer
         with PolicyServer(policy=policy, host=args.host, port=args.port) as server:
