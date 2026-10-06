@@ -145,14 +145,44 @@ def test_molmo_patch_is_scoped_idempotent_and_fails_closed(tmp_path):
     assert path.read_text() == 'different upstream version'
 
 
+def native_molmo_bf16_source():
+    return (Path(__file__).parent / 'fixtures/molmo_yam_native_bf16.txt').read_text()
+
+
+def test_molmo_native_bf16_needs_no_patch_or_backup(tmp_path):
+    path = tmp_path / 'modeling_molmoact2.py'
+    original = native_molmo_bf16_source()
+    path.write_text(original)
+    for _ in range(2):
+        loading.patch_molmo_bf16(tmp_path)
+    assert path.read_text() == original
+    assert not path.with_suffix('.py.before-colosseum-bf16').exists()
+    assert all(loading._molmo_bf16_supported(original))
+
+
+@pytest.mark.parametrize('before,after', [
+    ('trajectory_dtype = action_expert.action_embed.weight.dtype', 'trajectory_dtype = torch.float32'),
+    ('tensor = tensor.float()', 'tensor = tensor'),
+])
+def test_molmo_incomplete_native_fix_rejected_without_mutation(tmp_path, before, after):
+    path = tmp_path / 'modeling_molmoact2.py'
+    original = native_molmo_bf16_source().replace(before, after)
+    path.write_text(original)
+    with pytest.raises(ValueError, match='does not match'):
+        loading.patch_molmo_bf16(tmp_path)
+    assert path.read_text() == original
+    assert not path.with_suffix('.py.before-colosseum-bf16').exists()
+
+
+@pytest.mark.parametrize("native_bf16", [False, True])
 @pytest.mark.parametrize("robot_type,dim,keys,tag", [
     ("franka", 8, ("external_cam", "wrist_cam"), "franka_droid"),
     ("yam", 14, ("top_cam", "left_cam", "right_cam"), "yam_dual_molmoact2"),
 ])
-def test_molmo_load_and_real_predict_entry_use_deployed_precision(monkeypatch, tmp_path, robot_type, dim, keys, tag):
+def test_molmo_load_and_real_predict_entry_use_deployed_precision(monkeypatch, tmp_path, robot_type, dim, keys, tag, native_bf16):
     fake_torch(monkeypatch)
     calls = {}
-    (tmp_path / 'modeling_molmoact2.py').write_text('# patched_bf16_dtype\n# patched_bf16_to_array')
+    (tmp_path / 'modeling_molmoact2.py').write_text(native_molmo_bf16_source() if native_bf16 else '# patched_bf16_dtype\n# patched_bf16_to_array')
 
     class Model:
         @classmethod
@@ -369,3 +399,14 @@ async def test_pi05_websocket_worker_roundtrip_and_sanitized_failure():
             assert result['actions'].shape == (15, 8)
             await socket.send(msgpack.packb({'fail': True}))
             assert msgpack.unpackb(await socket.recv()) == {'error': 'Model inference failed'}
+
+
+def test_molmo_mixed_native_and_legacy_fixes(tmp_path):
+    path = tmp_path / 'modeling_molmoact2.py'
+    original = native_molmo_bf16_source().replace('dtype=trajectory_dtype,', 'dtype=torch.float32,')
+    path.write_text(original)
+    loading.patch_molmo_bf16(tmp_path)
+    assert all(loading._molmo_bf16_supported(path.read_text()))
+    assert 'patched_bf16_dtype' in path.read_text()
+    assert 'patched_bf16_to_array' not in path.read_text()
+    assert path.with_suffix('.py.before-colosseum-bf16').read_text() == original

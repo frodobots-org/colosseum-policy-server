@@ -12,6 +12,33 @@ import numpy as np
 from .pi05_contract import load_quantile_stats, prepare_droid_request, droid_actions_from_lerobot
 
 
+# Native BF16 fixes in MolmoAct2-BimanualYAM revision 8dcbed66f2380e4393189c303ea72488eb9e63c2.
+# Match complete known blocks, not a dtype keyword elsewhere in the source.
+_MOLMO_NATIVE_TRAJECTORY = """trajectory_dtype = action_expert.action_embed.weight.dtype
+        trajectory = torch.randn(
+            (batch_size, action_horizon, self.config.max_action_dim),
+            device=device,
+            dtype=trajectory_dtype,
+            generator=generator,
+        )"""
+_MOLMO_NATIVE_ARRAY = """def _to_array(value: Any) -> Optional[np.ndarray]:
+    if value is None:
+        return None
+    if torch.is_tensor(value):
+        tensor = value.detach()
+        if tensor.dtype in (torch.bfloat16, torch.float16):
+            tensor = tensor.float()
+        return tensor.cpu().numpy().astype(np.float32, copy=False)
+    return np.asarray(value, dtype=np.float32)"""
+
+
+def _molmo_bf16_supported(source):
+    return (
+        "patched_bf16_dtype" in source or _MOLMO_NATIVE_TRAJECTORY in source,
+        "patched_bf16_to_array" in source or _MOLMO_NATIVE_ARRAY in source,
+    )
+
+
 def patch_molmo_bf16(checkpoint):
     """Apply the deployed dtype fixes to the explicitly selected local source.
 
@@ -22,15 +49,15 @@ def patch_molmo_bf16(checkpoint):
     source = Path(checkpoint) / "modeling_molmoact2.py"
     original = source.read_text(encoding="utf-8")
     updated = original
-    for before, after, marker in (
+    for index, (before, after, marker) in enumerate((
         ("device=device,\n            dtype=torch.float32,\n            generator=generator,",
          "device=device,\n            dtype=source_tensor.dtype,  # patched_bf16_dtype\n            generator=generator,",
          "patched_bf16_dtype"),
         ("return value.detach().cpu().numpy().astype(np.float32, copy=False)",
          "return value.detach().cpu().float().numpy().astype(np.float32, copy=False)  # patched_bf16_to_array",
          "patched_bf16_to_array"),
-    ):
-        if marker in updated:
+    )):
+        if _molmo_bf16_supported(updated)[index]:
             continue
         if updated.count(before) != 1:
             raise ValueError("Molmo dtype fix does not match this checkpoint's model source")
@@ -60,8 +87,8 @@ class MolmoRuntime:
             patch_molmo_bf16(checkpoint)
         if dtype != "float32":
             source = (Path(checkpoint) / "modeling_molmoact2.py").read_text(encoding="utf-8")
-            if not all(marker in source for marker in ("patched_bf16_dtype", "patched_bf16_to_array")):
-                raise ValueError("Molmo bfloat16 requires the deployed dtype fixes; use --patch-molmo-bf16")
+            if not all(_molmo_bf16_supported(source)):
+                raise ValueError("Molmo bfloat16 requires native or patched dtype fixes; use --patch-molmo-bf16")
         self.processor = AutoProcessor.from_pretrained(
             str(checkpoint), local_files_only=True, trust_remote_code=True,
             extra_special_tokens={},
