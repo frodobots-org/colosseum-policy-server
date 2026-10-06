@@ -115,7 +115,11 @@ async def test_stop_holds_without_more_llm_calls_and_resets(tmp_path, reason, op
     assert len(calls) == 1
     obs = observation(9)
     obs.state["joint_position"].data = np.full(7, .5, np.float32).tobytes()
-    with pytest.raises(ValueError, match="hold target"):
+    np.testing.assert_array_equal(await backend.infer(item, obs), held)
+    assert len(calls) == 1
+    obs = observation(10)
+    obs.state["joint_position"].data = np.full(7, 1.1, np.float32).tobytes()
+    with pytest.raises(ValueError, match="outside the configured rig bounds"):
         await backend.infer(item, obs)
     await backend.end_session()
     record = json.loads(next(tmp_path.glob("*.json")).read_text())
@@ -418,6 +422,7 @@ async def test_yam_stop_retains_both_executed_grippers(tmp_path, reason):
         meta={'request_stop': True, 'stop_reason': reason})])
     held = await backend.infer(item, yam_observation(1))
     np.testing.assert_allclose(held[0,[6,13]], [.1,.9])
+    backend.agent.act = lambda obs: pytest.fail('Holding must not call the LLM again')
     obs = yam_observation(2)
     del obs.sensors[:]
     np.testing.assert_array_equal(await backend.infer(item, obs), held)
@@ -425,7 +430,11 @@ async def test_yam_stop_retains_both_executed_grippers(tmp_path, reason):
     values = np.zeros(12, np.float32)
     values[-1] = .5
     obs.state['joint_position'].data = values.tobytes()
-    with pytest.raises(ValueError, match='hold target'):
+    np.testing.assert_array_equal(await backend.infer(item, obs), held)
+    obs = yam_observation(4)
+    values[-1] = 1.1
+    obs.state['joint_position'].data = values.tobytes()
+    with pytest.raises(ValueError, match='outside the configured rig bounds'):
         await backend.infer(item, obs)
     await backend.end_session()
 

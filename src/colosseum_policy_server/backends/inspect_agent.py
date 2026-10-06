@@ -232,9 +232,12 @@ class InspectAgentBackend:
         return self.last_actions.copy()
 
     def _hold(self, joints, control_step):
-        """Repeat one fixed target while retaining the per-step motion guard."""
-        if np.any(np.abs(self.hold_target[self.joint_indices].astype(np.float64) - joints) > self.max_step + 1e-7):
-            raise ValueError("hold target exceeds per-step joint limits from measured state")
+        """Repeat the latched target until the Client ends the trial.
+
+        Tracking drift must not turn an agent stop request into inference
+        failure. _infer still validates observed absolute joint/gripper bounds;
+        regular agent actions retain their per-step guards.
+        """
         self.last_step = control_step
         return self.hold_target[None, :].copy()
 

@@ -169,8 +169,10 @@ HTTP timeout (up to minutes); it never lets a late worker mutate a new trial.
 The gripper keeps its last executed binary command; if no command has been
 executed, its measured position is thresholded into a binary command. The
 backend returns this same target as a one-step `ACTION_PLAN` on each subsequent
-observation, without further LLM calls. State and per-step joint limits still
-apply; excessive displacement from the hold target raises an error.
+observation, without further LLM calls. Measured absolute joint/gripper bounds
+still apply. Holding does not reject target-minus-measured drift or move the
+latched target with each observation. Normal agent-generated actions retain
+their per-step joint limits. The Client's own action validation still applies.
 
 The Client continues until the operator presses Enter or the task reaches
 `max_steps`, then follows its normal finish and manual scoring flow. An agent's
