@@ -372,6 +372,34 @@ def yam_model(provider='x-ai', name='grok-4.7'):
                    backend_options={'robot_type': 'yam'})
 
 
+@pytest.mark.parametrize('robot_type', ['yam', 'franka'])
+async def test_observed_bounds_error_identifies_all_bad_dimensions(tmp_path, robot_type):
+    is_yam = robot_type == 'yam'
+    backend = InspectAgentBackend(yam_options(tmp_path) if is_yam else options(tmp_path),
+        agent_factory=factory(lambda r: pytest.fail('Invalid state must not call provider')))
+    item = yam_model() if is_yam else model()
+    await backend.start_session(item, {'run_id': 'bounds', 'api_key': 'test', 'robot_type': robot_type})
+    obs = yam_observation() if is_yam else observation()
+    joints = np.zeros(12 if is_yam else 7, np.float32)
+    joints[0], joints[-1] = -1.25, 1.5
+    obs.state['joint_position'].data = joints.tobytes()
+    obs.state['gripper_position'].data = np.asarray([-.25, 1.25] if is_yam else [1.25], np.float32).tobytes()
+    try:
+        with pytest.raises(ValueError) as exc:
+            await backend.infer(item, obs)
+        message = str(exc.value)
+        for label, value, low, high in (
+            ('left_joint1' if is_yam else 'joint1', -1.25, -1, 1),
+            ('right_joint6' if is_yam else 'joint7', 1.5, -1, 1),
+            ('right_gripper' if is_yam else 'gripper', 1.25, 0, 1),
+        ):
+            assert f'{label}: measured={value:.6f}, low={low:.6f}, high={high:.6f}' in message
+        if is_yam:
+            assert 'left_gripper: measured=-0.250000, low=0.000000, high=1.000000' in message
+    finally:
+        await backend.end_session()
+
+
 @pytest.mark.parametrize('provider,name,wire,path', [
     ('openai', 'gpt-6-astra', 'responses', '/v1/responses'),
     ('x-ai', 'grok-4.7', 'chat', '/v1/chat/completions'),

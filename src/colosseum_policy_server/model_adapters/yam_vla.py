@@ -8,6 +8,7 @@ from urllib.request import Request, urlopen
 import numpy as np
 
 from .observation import _rgb, _state
+from .bounds import check_bounds
 from .franka_vla import _finite_matrix, _positive_float
 from ..numpy_wire import _json_array, _json_decode
 
@@ -38,8 +39,8 @@ class YAMVLAAdapter:
             raise ValueError('Duplicate camera sensor IDs')
         joints = _state(observation, 'joint_position', (12,))
         grippers = _state(observation, 'gripper_position', (2,))
-        if np.any(grippers < 0) or np.any(grippers > 1):
-            raise ValueError('YAM grippers must be in [0, 1]')
+        check_bounds(grippers, 0, 1, ('left_gripper', 'right_gripper'),
+                     'YAM grippers must be in [0, 1]')
         payload = {target: _json_array(_rgb(images.get(source), source)) for target, source in
                    [('top_cam', 'head_image'), ('left_cam', 'left_image'), ('right_cam', 'right_image')]}
         payload.update(state=_json_array(np.r_[joints[:6], grippers[:1], joints[6:], grippers[1:]]),
@@ -63,6 +64,6 @@ class YAMVLAAdapter:
         actions = _finite_matrix(_json_decode(raw['actions']), 14)
         if len(actions) > model.max_horizon:
             raise ValueError('YAM action chunk exceeds max_horizon')
-        if np.any(actions[:, [6, 13]] < 0) or np.any(actions[:, [6, 13]] > 1):
-            raise ValueError('YAM action grippers must be in [0, 1]')
+        check_bounds(actions[:, [6, 13]], 0, 1, ('left_gripper', 'right_gripper'),
+                     'YAM action grippers must be in [0, 1]')
         return actions

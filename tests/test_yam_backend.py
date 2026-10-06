@@ -18,6 +18,35 @@ def model(endpoint='http://127.0.0.1:9100'):
         max_horizon=30, endpoint=endpoint, backend_options={'adapter': 'molmoact2_yam', 'robot_type': 'yam'}))
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize('adapter', ['molmoact2_yam', 'groot_yam'])
+async def test_gripper_bounds_logged_before_network(adapter, caplog):
+    item = replace(model(), backend_options={'adapter': adapter, 'robot_type': 'yam'})
+    obs = observation()
+    obs.state['gripper_position'].CopyFrom(tensor_from_numpy(np.array([-.25, 1.25], np.float32)))
+    with pytest.raises(ValueError) as exc:
+        await YAMVLAAdapter({}).infer(item, obs)
+    assert 'left_gripper: measured=-0.250000, low=0.000000, high=1.000000' in str(exc.value)
+    assert 'right_gripper: measured=1.250000' in str(exc.value)
+    assert str(exc.value) in caplog.text
+
+
+@pytest.mark.parametrize('adapter', ['molmoact2_yam', 'groot_yam'])
+def test_action_gripper_bounds_logged_with_chunk_index(adapter, caplog, monkeypatch):
+    import io
+    import json
+    from colosseum_policy_server.model_adapters import yam_vla
+    actions = np.zeros((2, 14))
+    actions[1, 13] = 1.25
+    monkeypatch.setattr(yam_vla, 'urlopen', lambda *a, **k:
+                        io.BytesIO(json.dumps({'actions': actions.tolist()}).encode()))
+    item = replace(model(), backend_options={'adapter': adapter, 'robot_type': 'yam'})
+    with pytest.raises(ValueError) as exc:
+        YAMVLAAdapter({})._request(item, {})
+    assert 'action_index=1 right_gripper: target=1.250000, low=0.000000, high=1.000000' in str(exc.value)
+    assert str(exc.value) in caplog.text
+
+
 def observation():
     return pb.Observation(instruction='pick', state={
         'joint_position': tensor_from_numpy(np.arange(12, dtype=np.float32)),

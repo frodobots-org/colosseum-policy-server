@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Mapping
@@ -16,6 +17,7 @@ from uuid import uuid4
 import numpy as np
 
 from .base import LocalModel
+from ..model_adapters.bounds import check_bounds
 from ..model_adapters.observation import _rgb, _state
 from ..model_adapters.robots import session_robot, llm_robot_contract
 
@@ -171,8 +173,8 @@ class InspectAgentBackend:
             raise ValueError("instruction must be nonempty and control_step must advance")
         joints = _state(observation, self.robot.state_key, (self.joint_count,)).astype(np.float64)
         gripper = _state(observation, "gripper_position", (self.gripper_count,)).astype(np.float64)
-        if np.any(joints < self.low) or np.any(joints > self.high) or np.any(gripper < 0) or np.any(gripper > 1):
-            raise ValueError("observed state is outside the configured rig bounds")
+        check_bounds(self.robot.pack(joints, gripper), self.action_low, self.action_high,
+                     self.robot.labels, "observed state is outside the configured rig bounds")
         if self.hold_target is not None:
             return self._hold(joints, observation.control_step)
         raw = {item.sensor_id: item for item in observation.sensors}
@@ -218,10 +220,21 @@ class InspectAgentBackend:
         actions = np.asarray([action.data for action in chunk.actions], dtype=np.float64)
         if actions.ndim != 2 or actions.shape[1] != self.robot.action_dim or not len(actions) or not np.isfinite(actions).all():
             raise ValueError("agent returned malformed actions")
-        if np.any(actions < self.action_low) or np.any(actions > self.action_high):
-            raise ValueError("agent actions exceed rig bounds")
-        if np.any(np.abs(np.diff(np.vstack((position, actions)), axis=0)[:, self.joint_indices]) > self.max_step + 1e-7):
-            raise ValueError("agent actions exceed per-step joint limits")
+        check_bounds(actions, self.action_low, self.action_high, self.robot.labels,
+                     "agent actions exceed rig bounds")
+        previous = np.vstack((position, actions[:-1]))
+        delta = actions[:, self.joint_indices] - previous[:, self.joint_indices]
+        exceeded = np.abs(delta) > self.max_step + 1e-7
+        if np.any(exceeded):
+            details = '; '.join(
+                f'action_index={row} {self.robot.labels[self.joint_indices[j]]}: '
+                f'previous={previous[row, self.joint_indices[j]]:.6f}, '
+                f'target={actions[row, self.joint_indices[j]]:.6f}, '
+                f'delta={delta[row, j]:.6f}, limit={self.max_step[j]:.6f}'
+                for row, j in zip(*np.nonzero(exceeded)))
+            error = "agent actions exceed per-step joint limits: " + details
+            logging.getLogger(__name__).error('%s', error)
+            raise ValueError(error)
         # Franka uses binary grippers; YAM preserves continuous openings.
         if self.robot.binary_gripper:
             actions[:, self.gripper_indices] = (actions[:, self.gripper_indices] > .5).astype(float)
