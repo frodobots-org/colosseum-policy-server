@@ -309,7 +309,7 @@ async def test_auto_flat_options_and_session_switch(tmp_path):
     assert backend.active is None
 
 
-@pytest.mark.parametrize('robot', ['yam', 'so101'])
+@pytest.mark.parametrize('robot', ['so101'])
 async def test_llm_rejects_unimplemented_robot_before_creating_agent(tmp_path, robot):
     backend = InspectAgentBackend(options(tmp_path))
     with pytest.raises(ValueError, match='not implemented'):
@@ -347,3 +347,125 @@ async def test_relay_endpoint_credentials_and_real_inspect(tmp_path, provider, n
     assert actions.shape==(1,8)
     assert seen[0]['model']==name
     await backend.end_session()
+
+
+def yam_options(tmp_path):
+    return {**options(tmp_path), 'robot_type': 'yam', 'joint_low': [-1.]*12,
+            'joint_high': [1.]*12, 'joint_max_step': [.02]*12, 'gripper_open_value': 1}
+
+
+def yam_observation(step=0):
+    obs = observation(step)
+    for name, values in [('joint_position', [0.]*12), ('gripper_position', [.25, .75])]:
+        array = np.asarray(values, np.float32)
+        obs.state[name].CopyFrom(pb.Tensor(shape=array.shape, dtype=pb.FLOAT32, data=array.tobytes()))
+    obs.sensors.add(sensor_id='right_image', encoding=pb.RAW_RGB, width=2, height=2, data=bytes(12))
+    return obs
+
+
+def yam_model(provider='x-ai', name='grok-4.7'):
+    return replace(model(provider, name), action_dim=14, control_hz=30,
+                   backend_options={'robot_type': 'yam'})
+
+
+@pytest.mark.parametrize('provider,name,wire,path', [
+    ('openai', 'gpt-6-astra', 'responses', '/v1/responses'),
+    ('x-ai', 'grok-4.7', 'chat', '/v1/chat/completions'),
+    ('anthropic', 'claude-opus-5-5', 'messages', '/v1/messages'),
+])
+async def test_yam_three_providers_through_runtime(tmp_path, provider, name, wire, path):
+    calls = []
+    def handler(request):
+        calls.append(json.loads(request.content))
+        assert request.url.path == path and calls[-1]['model'] == name
+        return httpx.Response(200, json=response(wire, 'move_joints', {
+            'targets': {'left_joint1': .03, 'right_joint1': -.03}, 'note': 'Move both arms'}))
+    backend = InspectAgentBackend(yam_options(tmp_path), agent_factory=factory(handler))
+    item = yam_model(provider, name)
+    cfg = RuntimeConfig('127.0.0.1', 8000, 'inspect_agent', {}, tmp_path, 1, {'agent': item})
+    ws = Socket([
+        encode_control(dict(type='prepare', run_id='yam', robot_type='yam',
+                            model=item.public_spec(), api_key='test')),
+        pb.RelayFrame(protocol_version=1, type=pb.OBSERVATION, session_id='yam',
+            sequence=1, deadline_ms=5000, payload=yam_observation().SerializeToString()).SerializeToString(),
+        pb.RelayFrame(protocol_version=1, type=pb.SESSION_CLOSE, session_id='yam').SerializeToString(),
+    ])
+    await LocalPolicyRuntime(cfg, backend).handle(ws)
+    assert decode_control(ws.sent[0])['type'] == 'ready'
+    frame = pb.RelayFrame.FromString(ws.sent[1])
+    assert frame.type == pb.ACTION_PLAN
+    plan = pb.ActionPlan.FromString(frame.payload)
+    assert list(plan.actions.shape) == [2, 14] and plan.control_hz == 30
+    actions = np.frombuffer(plan.actions.data, np.float32).reshape(2,14)
+    assert 0 < actions[0,0] < actions[1,0] <= .03
+    assert -.03 <= actions[1,7] < actions[0,7] < 0
+    np.testing.assert_array_equal(actions[:, [6,13]], [[.25,.75],[.25,.75]])
+    assert len(calls) == 1 and backend.agent is None
+
+
+@pytest.mark.parametrize('reason', ['done', 'give_up'])
+async def test_yam_stop_retains_both_executed_grippers(tmp_path, reason):
+    from inspect_robots.types import Action, ActionChunk
+    backend = InspectAgentBackend(yam_options(tmp_path), agent_factory=factory(lambda r:
+        httpx.Response(200, json=response('chat', 'move_joints',
+            {'targets': {'left_joint1': .01}, 'note': 'move'}))))
+    item = yam_model()
+    await backend.start_session(item, {'run_id': 'yam', 'api_key': 'test', 'robot_type': 'yam'})
+    await backend.infer(item, yam_observation())
+    backend.last_actions = np.zeros((2,14), np.float32)
+    backend.last_actions[:, [6,13]] = [[.1,.9],[.8,.2]]
+    backend.agent.act = lambda obs: ActionChunk([Action(np.zeros(14),
+        meta={'request_stop': True, 'stop_reason': reason})])
+    held = await backend.infer(item, yam_observation(1))
+    np.testing.assert_allclose(held[0,[6,13]], [.1,.9])
+    obs = yam_observation(2)
+    del obs.sensors[:]
+    np.testing.assert_array_equal(await backend.infer(item, obs), held)
+    obs = yam_observation(3)
+    values = np.zeros(12, np.float32)
+    values[-1] = .5
+    obs.state['joint_position'].data = values.tobytes()
+    with pytest.raises(ValueError, match='hold target'):
+        await backend.infer(item, obs)
+    await backend.end_session()
+
+
+async def test_yam_rejects_bad_contract_and_right_arm_jump(tmp_path):
+    from inspect_robots.types import Action, ActionChunk
+    backend = InspectAgentBackend(yam_options(tmp_path), agent_factory=factory(lambda r:
+        httpx.Response(200, json=response('chat', 'move_joints',
+            {'targets': {'right_joint1': .01}, 'note': 'move'}))))
+    for item in [replace(yam_model(), action_dim=8), replace(yam_model(), control_hz=15)]:
+        with pytest.raises(ValueError):
+            await backend.start_session(item, {'run_id': 'r', 'api_key': 'test', 'robot_type': 'yam'})
+        assert backend.agent is None
+    item = yam_model()
+    await backend.start_session(item, {'run_id': 'r', 'api_key': 'test', 'robot_type': 'yam'})
+    obs = yam_observation()
+    del obs.sensors[-1]
+    with pytest.raises(ValueError, match='RGB sensor'):
+        await backend.infer(item, obs)
+    await backend.infer(item, yam_observation())
+    action = np.zeros(14)
+    action[12] = .5
+    backend.agent.act = lambda obs: ActionChunk([Action(action)])
+    with pytest.raises(ValueError, match='per-step'):
+        await backend.infer(item, yam_observation(2))
+    action[12], action[6] = 0, 1.1
+    with pytest.raises(ValueError, match='rig bounds'):
+        await backend.infer(item, yam_observation(2))
+    await backend.end_session()
+
+
+async def test_yam_agent_example_routes_all_three_models(tmp_path):
+    from pathlib import Path
+    from colosseum_policy_server.backends.auto import AutoBackend
+    cfg = RuntimeConfig.from_yaml(Path(__file__).parents[1] / 'configs/local-runtime-yam-agent.yaml.example')
+    assert {m.name for m in cfg.models.values()} == {'grok-4.7', 'claude-opus-5-5', 'gpt-6-astra'}
+    backend = AutoBackend({'llm': yam_options(tmp_path)})
+    for item in cfg.models.values():
+        await backend.start_session(item, {'run_id': 'config', 'api_key': 'test', 'robot_type': 'yam'})
+        assert isinstance(backend.active, InspectAgentBackend)
+        assert backend.active.robot.action_dim == 14
+        assert backend.active.gripper_indices == [6, 13]
+        await backend.end_session()

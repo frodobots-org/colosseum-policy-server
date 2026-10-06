@@ -10,6 +10,9 @@ from ..model_adapters.robots import session_robot
 
 
 def load_model_adapter(name, options):
+    if name == 'molmoact2_yam':
+        from ..model_adapters.yam_vla import YAMVLAAdapter
+        return YAMVLAAdapter(options)
     if name in _ADAPTERS:
         return FrankaVLAAdapter(options)
     entries = metadata.entry_points()

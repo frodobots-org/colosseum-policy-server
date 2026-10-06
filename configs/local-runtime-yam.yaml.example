@@ -1,0 +1,33 @@
+host: 127.0.0.1
+port: 8000
+backend:
+  name: vla
+  options:
+    http_timeout_seconds: 30
+models:
+  - name: molmoact2-yam
+    model_type: vla
+    url: https://huggingface.co/allenai/MolmoAct2-BimanualYAM
+    # Must match the actual local snapshot AND the Router model registration.
+    revision: 8dcbed66f2380e4393189c303ea72488eb9e63c2
+    action_space: joint_position
+    action_dim: 14
+    control_hz: 30
+    max_horizon: 30
+    endpoint: http://127.0.0.1:8202
+    backend_options:
+      robot_type: yam
+      adapter: molmoact2_yam
+      num_steps: 10
+    # Optional: launch the model worker in its dedicated GPU environment.
+    # launcher:
+    #   - /absolute/path/to/model-env/bin/colosseum-policy-model
+    #   - molmoact2
+    #   - --robot-type
+    #   - yam
+    #   - --checkpoint
+    #   - /absolute/path/to/MolmoAct2-BimanualYAM-snapshot
+    #   - --dtype
+    #   - float32
+    #   - --port
+    #   - "8202"

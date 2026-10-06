@@ -1,6 +1,6 @@
 """Stateful Inspect Robots LLM policy behind Colosseum's Local Protocol.
 
-No robot driver is loaded here. The existing DROID client executes joint
+No robot driver is loaded here. The Client executes Franka or bimanual YAM joint
 positions. Optional Inspect dependencies are imported only on session startup.
 """
 from __future__ import annotations
@@ -48,6 +48,9 @@ class InspectAgentBackend:
         self.robot = llm_robot_contract(session_robot(model, request, self.options))
         self.robot.validate(model)
         self.joint_count = self.robot.joint_count
+        self.joint_indices = list(self.robot.joint_indices)
+        self.gripper_indices = list(self.robot.gripper_indices)
+        self.gripper_count = len(self.gripper_indices)
         identity = urlsplit(model.url)
         typed = model.model_type == "llm"
         providers = {"gpt-": ("openai", "OPENAI_API_KEY"),
@@ -71,8 +74,16 @@ class InspectAgentBackend:
             raise ValueError("joint bounds must increase and joint_max_step must be positive")
         self.open_value = settings.get("gripper_open_value")
         if type(self.open_value) is not int or self.open_value not in {0, 1}:
-            raise ValueError("declare gripper_open_value as 0 or 1 for the RobotEnv")
-        self.sensors = tuple(settings.get("sensors", ["head_image", "left_image"]))
+            raise ValueError("declare gripper_open_value as 0 or 1 for the Client driver")
+        if self.robot.name == 'yam' and self.open_value != 1:
+            raise ValueError('YAM requires gripper_open_value: 1')
+        default_sensors = ['head_image', 'left_image', 'right_image'] if self.robot.name == 'yam' else ['head_image', 'left_image']
+        self.sensors = tuple(settings.get("sensors", default_sensors))
+        if self.robot.name == 'yam' and set(self.sensors) != set(default_sensors):
+            raise ValueError('YAM requires head_image, left_image and right_image')
+        self.action_low = self.robot.pack(self.low, np.zeros(self.gripper_count))
+        self.action_high = self.robot.pack(self.high, np.ones(self.gripper_count))
+        self.action_max_step = self.robot.pack(self.max_step, np.ones(self.gripper_count))
         if not self.sensors or any(not isinstance(s, str) or not s for s in self.sensors) or len(set(self.sensors)) != len(self.sensors):
             raise ValueError("sensors must be nonempty unique sensor names")
         self.docs = str(settings.get("robot_notes", ""))
@@ -159,7 +170,7 @@ class InspectAgentBackend:
         if not observation.instruction.strip() or observation.control_step <= self.last_step:
             raise ValueError("instruction must be nonempty and control_step must advance")
         joints = _state(observation, self.robot.state_key, (self.joint_count,)).astype(np.float64)
-        gripper = _state(observation, "gripper_position", (1,)).astype(np.float64)
+        gripper = _state(observation, "gripper_position", (self.gripper_count,)).astype(np.float64)
         if np.any(joints < self.low) or np.any(joints > self.high) or np.any(gripper < 0) or np.any(gripper > 1):
             raise ValueError("observed state is outside the configured rig bounds")
         if self.hold_target is not None:
@@ -167,18 +178,18 @@ class InspectAgentBackend:
         raw = {item.sensor_id: item for item in observation.sensors}
         images = {name: _rgb(raw.get(name), name) for name in self.sensors}
         # Inspect uses 1=open. RobotEnv's polarity is explicitly configured.
-        position = np.r_[joints, gripper if self.open_value == 1 else 1 - gripper]
+        position = self.robot.pack(joints, gripper if self.open_value == 1 else 1 - gripper)
         if not self.bound:
             cameras = tuple(CameraSpec(name, img.shape[0], img.shape[1]) for name, img in images.items())
             self.agent.bind(EmbodimentInfo(
                 name=self.robot.name, control_hz=self.model.control_hz,
-                action_space=Box(shape=(self.robot.action_dim,), low=np.r_[self.low, 0.], high=np.r_[self.high, 1.],
-                    semantics=ActionSemantics(control_mode="joint_pos", gripper="binary",
-                        dim_labels=tuple(f"joint{i + 1}" for i in range(self.joint_count)) + ("gripper",),
-                        max_step=tuple(self.max_step) + (1.,))),
+                action_space=Box(shape=(self.robot.action_dim,), low=self.action_low, high=self.action_high,
+                    semantics=ActionSemantics(control_mode="joint_pos", gripper="binary" if self.robot.binary_gripper else "continuous",
+                        dim_labels=self.robot.labels,
+                        max_step=tuple(self.action_max_step))),
                 observation_space=ObservationSpace(cameras=cameras,
                     state=StateSpec((StateField("joint_pos", (self.robot.action_dim,), "rad+normalized"),))),
-                docs=self.docs + "\nThe final dimension is gripper: 0 closed, 1 open. "
+                docs=self.docs + f"\nAction order: {', '.join(self.robot.labels)}. Grippers: 0 closed, 1 open. "
                     "Motion may be truncated to max_horizon; use the next measured state to replan.",
             ))
             self.agent.reset(Scene(id=self.run_id, instruction=observation.instruction))
@@ -194,34 +205,35 @@ class InspectAgentBackend:
             self.stop_step = observation.control_step
             self.stop_detail = str(meta.get("stop_detail", ""))
             # Freeze measured joints, not the LLM's proposed stop action. Keep
-            # the last executed binary gripper command: an obstructed closed
+            # the last executed gripper commands: an obstructed closed
             # gripper's measured width can look open and must not reopen it.
-            grip = float(gripper[0] > .5)
+            grip = (gripper > .5).astype(float) if self.robot.binary_gripper else gripper.copy()
             if self.last_actions is not None:
                 executed = min(observation.control_step - self.last_step, len(self.last_actions))
-                grip = float(self.last_actions[executed - 1, -1])
-            self.hold_target = np.r_[joints, grip].astype(np.float32)
+                grip = self.last_actions[executed - 1, self.gripper_indices].copy()
+            self.hold_target = self.robot.pack(joints, grip).astype(np.float32)
             return self._hold(joints, observation.control_step)
         if chunk.control_hz is not None and chunk.control_hz != self.model.control_hz:
             raise ValueError("agent returned a different control frequency")
         actions = np.asarray([action.data for action in chunk.actions], dtype=np.float64)
         if actions.ndim != 2 or actions.shape[1] != self.robot.action_dim or not len(actions) or not np.isfinite(actions).all():
             raise ValueError("agent returned malformed actions")
-        if np.any(actions < np.r_[self.low, 0.]) or np.any(actions > np.r_[self.high, 1.]):
+        if np.any(actions < self.action_low) or np.any(actions > self.action_high):
             raise ValueError("agent actions exceed rig bounds")
-        if np.any(np.abs(np.diff(np.vstack((position, actions)), axis=0)[:, :self.joint_count]) > self.max_step + 1e-7):
+        if np.any(np.abs(np.diff(np.vstack((position, actions)), axis=0)[:, self.joint_indices]) > self.max_step + 1e-7):
             raise ValueError("agent actions exceed per-step joint limits")
-        # Match the existing client's binary gripper execution, including polarity.
-        actions[:, -1] = (actions[:, -1] > .5).astype(float)
+        # Franka uses binary grippers; YAM preserves continuous openings.
+        if self.robot.binary_gripper:
+            actions[:, self.gripper_indices] = (actions[:, self.gripper_indices] > .5).astype(float)
         if self.open_value == 0:
-            actions[:, -1] = 1 - actions[:, -1]
+            actions[:, self.gripper_indices] = 1 - actions[:, self.gripper_indices]
         self.last_step = observation.control_step
         self.last_actions = actions[:self.model.max_horizon].astype(np.float32)
         return self.last_actions.copy()
 
     def _hold(self, joints, control_step):
         """Repeat one fixed target while retaining the per-step motion guard."""
-        if np.any(np.abs(self.hold_target[:self.joint_count].astype(np.float64) - joints) > self.max_step + 1e-7):
+        if np.any(np.abs(self.hold_target[self.joint_indices].astype(np.float64) - joints) > self.max_step + 1e-7):
             raise ValueError("hold target exceeds per-step joint limits from measured state")
         self.last_step = control_step
         return self.hold_target[None, :].copy()

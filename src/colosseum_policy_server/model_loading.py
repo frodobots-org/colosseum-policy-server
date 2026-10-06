@@ -45,11 +45,16 @@ def patch_molmo_bf16(checkpoint):
 
 class MolmoRuntime:
     def __init__(self, checkpoint, *, device="cuda:0", num_steps=10,
-                 dtype="bfloat16", patch_bf16=False):
+                 dtype="bfloat16", patch_bf16=False, robot_type="franka"):
         import torch
         from transformers import AutoModelForImageTextToText, AutoProcessor
         from PIL import Image
 
+        if robot_type not in {'franka', 'yam'}:
+            raise ValueError('Molmo robot_type must be franka or yam')
+        self.action_dim = 14 if robot_type == 'yam' else 8
+        self.image_keys = ('top_cam', 'left_cam', 'right_cam') if robot_type == 'yam' else ('external_cam', 'wrist_cam')
+        self.norm_tag = 'yam_dual_molmoact2' if robot_type == 'yam' else 'franka_droid'
         self.torch, self.Image, self.num_steps = torch, Image, num_steps
         if patch_bf16:
             patch_molmo_bf16(checkpoint)
@@ -82,10 +87,10 @@ class MolmoRuntime:
 
     def infer(self, request):
         state = np.asarray(request["state"], dtype=np.float32).reshape(-1)
-        if state.shape != (8,) or not np.isfinite(state).all():
-            raise ValueError("Molmo requires eight finite state values")
+        if state.shape != (self.action_dim,) or not np.isfinite(state).all():
+            raise ValueError(f"Molmo requires {self.action_dim} finite state values")
         images = []
-        for key in ("external_cam", "wrist_cam"):
+        for key in self.image_keys:
             array = np.asarray(request[key])
             if array.ndim != 3 or array.shape[-1] != 3 or array.size == 0:
                 raise ValueError("Molmo image must be nonempty HWC RGB")
@@ -97,7 +102,7 @@ class MolmoRuntime:
                 processor=self.processor,
                 images=images,
                 task=request["instruction"], state=state,
-                norm_tag="franka_droid", inference_action_mode="continuous",
+                norm_tag=self.norm_tag, inference_action_mode="continuous",
                 enable_depth_reasoning=False, num_steps=int(request.get("num_steps", self.num_steps)),
                 normalize_language=True, enable_cuda_graph=False,
             )

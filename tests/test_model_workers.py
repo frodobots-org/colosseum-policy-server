@@ -145,7 +145,11 @@ def test_molmo_patch_is_scoped_idempotent_and_fails_closed(tmp_path):
     assert path.read_text() == 'different upstream version'
 
 
-def test_molmo_load_and_real_predict_entry_use_deployed_precision(monkeypatch, tmp_path):
+@pytest.mark.parametrize("robot_type,dim,keys,tag", [
+    ("franka", 8, ("external_cam", "wrist_cam"), "franka_droid"),
+    ("yam", 14, ("top_cam", "left_cam", "right_cam"), "yam_dual_molmoact2"),
+])
+def test_molmo_load_and_real_predict_entry_use_deployed_precision(monkeypatch, tmp_path, robot_type, dim, keys, tag):
     fake_torch(monkeypatch)
     calls = {}
     (tmp_path / 'modeling_molmoact2.py').write_text('# patched_bf16_dtype\n# patched_bf16_to_array')
@@ -167,21 +171,22 @@ def test_molmo_load_and_real_predict_entry_use_deployed_precision(monkeypatch, t
 
         def predict_action(self, **kwargs):
             calls['infer'] = kwargs
-            return SimpleNamespace(actions=Tensor(np.zeros((1, 3, 8))))
+            return SimpleNamespace(actions=Tensor(np.zeros((1, 3, dim))))
 
     module(monkeypatch, 'transformers', AutoModelForImageTextToText=Model,
            AutoProcessor=SimpleNamespace(from_pretrained=lambda *a, **k: 'processor'))
     module(monkeypatch, 'PIL', Image=SimpleNamespace(fromarray=lambda a: a))
-    runtime = loading.MolmoRuntime(tmp_path)
-    result = runtime.infer({'state': np.zeros(8), 'instruction': 'close',
-                            'external_cam': np.zeros((2, 2, 3), np.uint8), 'wrist_cam': np.zeros((2, 2, 3), np.uint8)})
+    runtime = loading.MolmoRuntime(tmp_path, robot_type=robot_type)
+    result = runtime.infer({'state': np.zeros(dim), 'instruction': 'close',
+                            **{key: np.full((2, 2, 3), i, np.uint8) for i, key in enumerate(keys)}})
     assert calls['load'][1]['torch_dtype'] == 'bfloat16'
     assert calls['load'][1]['local_files_only'] is True
     assert calls['infer']['enable_cuda_graph'] is False
-    assert calls['infer']['norm_tag'] == 'franka_droid'
+    assert calls['infer']['norm_tag'] == tag
+    assert [image[0, 0, 0] for image in calls['infer']['images']] == list(range(len(keys)))
     assert calls['infer']['inference_action_mode'] == 'continuous'
     assert calls['infer']['num_steps'] == 10
-    assert result['actions'].shape == (3, 8)
+    assert result['actions'].shape == (3, dim)
 
 
 def test_groot_loader_keeps_deployed_embodiment_and_local_processor(monkeypatch, tmp_path):

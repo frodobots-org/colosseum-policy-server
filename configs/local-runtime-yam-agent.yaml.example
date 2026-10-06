@@ -1,0 +1,59 @@
+# YAM LLM policies. Client supplies provider credentials per trial.
+host: 127.0.0.1
+port: 8000
+backend:
+  name: auto
+  options:
+    llm:
+      robot_type: yam
+      # REQUIRED: 12 finite values each, left six joints then right six, radians.
+      # Match the Client's calibrated operating limits.
+      joint_low: null
+      joint_high: null
+      joint_max_step: null
+      gripper_open_value: 1
+      sensors: [head_image, left_image, right_image]
+      # REQUIRED: replace with actual joint directions, base mounting and camera geometry.
+      robot_notes: ""
+      effort: low
+      max_llm_calls: 30
+      max_retries: 1
+      max_speed_frac: 0.1
+      log_dir: agent-logs
+models:
+  # URLs, model identifiers and revisions must match the Router registration.
+  # Matches the registered YAM relay deployments; Client keys must be relay keys.
+  - name: grok-4.7
+    model_type: llm
+    url: https://api.yhlxj.ai/v1
+    revision: "4.7"
+    action_space: joint_position
+    action_dim: 14
+    control_hz: 30
+    max_horizon: 150
+    endpoint: inprocess://inspect-agent
+    backend_options:
+      robot_type: yam
+  - name: claude-opus-5-5
+    model_type: llm
+    url: https://api.yhlxj.ai
+    revision: rig-v1
+    action_space: joint_position
+    action_dim: 14
+    control_hz: 30
+    max_horizon: 150
+    endpoint: inprocess://inspect-agent
+    backend_options:
+      robot_type: yam
+      api_auth: bearer
+  - name: gpt-6-astra
+    model_type: llm
+    url: https://api.yhlxj.ai/v1
+    revision: rig-v1
+    action_space: joint_position
+    action_dim: 14
+    control_hz: 30
+    max_horizon: 150
+    endpoint: inprocess://inspect-agent
+    backend_options:
+      robot_type: yam

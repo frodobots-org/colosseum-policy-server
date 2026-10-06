@@ -31,6 +31,11 @@ received joint and gripper positions as a one-step `joint_position` action.
 The action dimension must match the combined state length. No model inference
 is performed.
 
+For MolmoAct2-BimanualYAM, follow the [YAM setup guide](docs/yam.md) and
+use [the YAM runtime example](configs/local-runtime-yam.yaml.example).
+For YAM with Grok 4.7, Opus 5.5 or GPT-6 Astra, use the
+[YAM Inspect Agent example](configs/local-runtime-yam-agent.yaml.example).
+
 ### Run a Real Robot Policy Server
 
 Install the DROID and LLM adapters once:
