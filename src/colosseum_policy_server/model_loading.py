@@ -77,11 +77,11 @@ class MolmoRuntime:
         from transformers import AutoModelForImageTextToText, AutoProcessor
         from PIL import Image
 
-        if robot_type not in {'franka', 'yam'}:
-            raise ValueError('Molmo robot_type must be franka or yam')
-        self.action_dim = 14 if robot_type == 'yam' else 8
+        if robot_type not in {'franka', 'yam', 'so101'}:
+            raise ValueError('Molmo robot_type must be franka, yam or so101')
+        self.action_dim = {'yam': 14, 'so101': 6}.get(robot_type, 8)
         self.image_keys = ('top_cam', 'left_cam', 'right_cam') if robot_type == 'yam' else ('external_cam', 'wrist_cam')
-        self.norm_tag = 'yam_dual_molmoact2' if robot_type == 'yam' else 'franka_droid'
+        self.norm_tag = {'yam': 'yam_dual_molmoact2', 'so101': 'so100_so101_molmoact2'}.get(robot_type, 'franka_droid')
         self.torch, self.Image, self.num_steps = torch, Image, num_steps
         if patch_bf16:
             patch_molmo_bf16(checkpoint)
@@ -139,6 +139,8 @@ class MolmoRuntime:
         actions = np.asarray(actions, dtype=np.float32)
         if actions.ndim == 3 and actions.shape[0] == 1:
             actions = actions[0]
+        if self.norm_tag == 'so100_so101_molmoact2':
+            actions = actions[:, :self.action_dim]  # drop the model's action padding
         return {"actions": actions}
 
 

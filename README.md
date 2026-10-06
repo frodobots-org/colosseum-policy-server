@@ -35,6 +35,8 @@ For MolmoAct2-BimanualYAM, follow the [YAM setup guide](docs/yam.md) and
 use [the YAM runtime example](configs/local-runtime-yam.yaml.example).
 For YAM with Grok 4.7, Opus 5.5 or GPT-6 Astra, use the
 [YAM Inspect Agent example](configs/local-runtime-yam-agent.yaml.example).
+For the SO-ARM101 generalist checkpoints, follow the [SO101 setup guide](docs/so101.md)
+and use [the SO101 runtime example](configs/local-runtime-so101.yaml.example).
 
 ### Run a Real Robot Policy Server
 
