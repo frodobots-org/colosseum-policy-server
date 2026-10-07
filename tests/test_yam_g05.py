@@ -185,3 +185,24 @@ def test_source_metadata_fallback(assets):
     bundled.parent.mkdir(parents=True)
     bundled.write_bytes(parts.read_bytes())
     assert yam_g05.validate_assets(ckpt, source, processor)[3] == bundled
+
+
+def test_tokenizer_aliases_survive_upstream_sidecar_updates(assets):
+    # The actual upstream loader uses these three OmegaConf.update calls.
+    # Keeping the checkpoint aliases caused _target_ to disappear at startup.
+    OmegaConf = pytest.importorskip('omegaconf').OmegaConf
+    ckpt, source, processor, parts = assets
+    original = (ckpt / '.hydra/config.yaml').read_text()
+    staged = yam_g05.stage_config_text(original, parts)
+    cfg = OmegaConf.create(staged)
+    saved = yaml.safe_load(original)['tokenizer']
+    for key in ('tokenizer.vq_config.ckpt_dir', 'model.tokenizer.vq_config.ckpt_dir',
+                'model.model_arch.AT_CONFIG.ckpt_dir'):
+        if OmegaConf.select(cfg, key) is not None:
+            OmegaConf.update(cfg, key, '/local/action_tokenizer.pt', merge=False)
+    assert cfg.model.model_arch.action_tokenizer == saved['_target_']
+    expected = dict(saved['vq_config'], ckpt_dir='/local/action_tokenizer.pt')
+    for node in (cfg.tokenizer.vq_config, cfg.model.tokenizer.vq_config,
+                 cfg.model.model_arch.AT_CONFIG):
+        assert OmegaConf.to_container(node, resolve=True) == expected
+    assert (ckpt / '.hydra/config.yaml').read_text() == original

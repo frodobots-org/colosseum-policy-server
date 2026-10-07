@@ -3,6 +3,7 @@
 Use the published training parts_meta/yam.yaml rather than guessing the
 14-to-27-D padding/group layout.
 """
+from copy import deepcopy
 import os
 from pathlib import Path
 import runpy
@@ -70,6 +71,21 @@ def validate_assets(checkpoint, source_root, processor, parts_meta=None):
     return checkpoint, source_root, processor, parts_meta, config_text
 
 
+def stage_config_text(config_text, parts_meta):
+    cfg = yaml.safe_load(config_text.replace(
+        'configs/data/parts_meta/yam.yaml', str(parts_meta)))
+    # OmegaConf.update(..., merge=False) in upstream's sidecar loader replaces
+    # interpolation aliases with partial dictionaries. Materialize only these
+    # aliases before it patches ckpt_dir, retaining all saved tokenizer fields.
+    model = cfg['model']
+    if model.get('tokenizer') == '${tokenizer}':
+        model['tokenizer'] = deepcopy(cfg['tokenizer'])
+    arch = model['model_arch']
+    if arch.get('AT_CONFIG') == '${model.tokenizer.vq_config}':
+        arch['AT_CONFIG'] = deepcopy(model['tokenizer']['vq_config'])
+    return yaml.safe_dump(cfg, sort_keys=False)
+
+
 class G05YAMRuntime:
     action_dim = 14
     image_keys = ('top_cam', 'left_cam', 'right_cam')
@@ -85,8 +101,7 @@ class G05YAMRuntime:
         self._stage = tempfile.TemporaryDirectory(prefix='colosseum-g05-yam-')
         stage = Path(self._stage.name)
         (stage / '.hydra').mkdir()
-        (stage / '.hydra/config.yaml').write_text(config_text.replace(
-            'configs/data/parts_meta/yam.yaml', str(parts_meta)))
+        (stage / '.hydra/config.yaml').write_text(stage_config_text(config_text, parts_meta))
         for name in ('model.pt', 'dataset_stats.json', 'action_tokenizer.pt'):
             (stage / name).symlink_to(checkpoint / name)
         (stage / 'hf_processor').symlink_to(processor, target_is_directory=True)
