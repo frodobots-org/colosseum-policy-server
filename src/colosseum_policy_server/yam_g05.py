@@ -13,6 +13,8 @@ import tempfile
 import numpy as np
 import yaml
 
+from .model_adapters.bounds import check_bounds
+
 log = logging.getLogger(__name__)
 
 
@@ -179,6 +181,6 @@ class G05YAMRuntime:
                 raise ValueError(f'G05 {key} must be finite with shape (1, 32, {end-start})')
             arrays.append(array[0])
         actions = np.concatenate(arrays, axis=1)
-        if np.any(actions[:, [6, 13]] < 0) or np.any(actions[:, [6, 13]] > 1):
-            raise ValueError('G05 returned grippers outside [0, 1]')
+        check_bounds(actions[:, [6, 13]], 0, 1, ('left_gripper', 'right_gripper'),
+                     'G05 returned grippers outside [0, 1]')
         return {'actions': actions}

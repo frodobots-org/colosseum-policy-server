@@ -240,3 +240,18 @@ def test_continuous_output_still_checks_required_parts(runtime, bad):
     else: result['left_gripper'][0, 0, 0] = 1.1
     worker.inferencer.infer = lambda obs: [result]
     with pytest.raises(ValueError): worker.infer(payload())
+
+
+def test_gripper_error_reports_side_step_and_value(runtime, caplog):
+    worker, _ = runtime
+    result = {k: np.zeros((1, 32, e-s), np.float32) for k,s,e in worker.parts}
+    result['left_gripper'][0, 3, 0] = -0.02
+    result['right_gripper'][0, 17, 0] = 1.25
+    worker.inferencer.infer = lambda obs: [result]
+    with pytest.raises(ValueError) as exc:
+        worker.infer(payload())
+    message = str(exc.value)
+    assert 'action_index=3 left_gripper: target=-0.020000' in message
+    assert 'action_index=17 right_gripper: target=1.250000' in message
+    assert 'low=0.000000, high=1.000000' in message
+    assert message in caplog.text
