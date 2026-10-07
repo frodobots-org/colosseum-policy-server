@@ -41,6 +41,8 @@ For YAM with Grok 4.7, Opus 5.5 or GPT-6 Astra, use the
 For NUSMAGIC pi05-MolmoAct2-YAM, use the
 [pi05 YAM configuration](configs/local-runtime-yam-pi05.yaml.example) and
 [worker setup](docs/yam.md#pi05-yam).
+For RoboColosseum G05 YAM, see the [bridge setup and training metadata](docs/yam.md#g05-yam)
+and [runtime configuration](configs/local-runtime-yam-g05.yaml.example).
 
 ### Run a Real Robot Policy Server
 

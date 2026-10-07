@@ -33,6 +33,7 @@ def parse_args(argv=None):
     parser.add_argument("--groot-camera-order", choices=["checkpoint", "top-left-right"], default="checkpoint",
                         help="GR00T YAM camera packing; top-left-right is an experimental override")
     parser.add_argument("--source-root", type=Path, help="installed G05 upstream source checkout")
+    parser.add_argument("--g05-parts-meta", type=Path, help="original training parts_meta/yam.yaml for G05 YAM")
     parser.add_argument("--host", default="127.0.0.1", choices=["127.0.0.1", "localhost"])
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--device", default="cuda")
@@ -46,12 +47,16 @@ def parse_args(argv=None):
         parser.error("--groot-camera-order top-left-right requires groot_n17 --robot-type yam")
     if not 1 <= args.port <= 65535 or not 1 <= args.num_steps <= 10:
         parser.error("port must be valid and --num-steps must be in [1, 10]")
-    if args.robot_type != "franka" and args.model not in {"molmoact2", "groot_n17", "pi05_lerobot"}:
-        parser.error("--robot-type yam is implemented only for molmoact2, groot_n17 and pi05_lerobot")
+    if args.robot_type != "franka" and args.model not in {"molmoact2", "groot_n17", "pi05_lerobot", "g05"}:
+        parser.error("--robot-type yam is implemented only for molmoact2, groot_n17, pi05_lerobot and g05")
+    if args.g05_parts_meta is not None and (args.model != "g05" or args.robot_type != "yam"):
+        parser.error("--g05-parts-meta requires g05 --robot-type yam")
     required = {"molmoact2": [], "pi05_lerobot": ["tokenizer", "stats"],
                 "groot_n17": ["processor"], "lap_3b": ["tokenizer"], "g05": ["source_root"]}
     if args.model == "groot_n17" and args.robot_type == "yam":
         required["groot_n17"] = ["processor", "base_model"]
+    if args.model == "g05" and args.robot_type == "yam":
+        required["g05"] = ["source_root", "processor"]
     if args.model == "pi05_lerobot" and args.robot_type == "yam":
         required["pi05_lerobot"] = ["tokenizer"]
         if args.stats is not None:
@@ -60,11 +65,17 @@ def parse_args(argv=None):
         path = getattr(args, key)
         if path is None or not path.exists():
             parser.error(f"--{key.replace('_', '-')} must point to an existing local asset")
-    for key in ("checkpoint", "tokenizer", "stats", "processor", "source_root", "base_model"):
+    for key in ("checkpoint", "tokenizer", "stats", "processor", "source_root", "base_model", "g05_parts_meta"):
         path = getattr(args, key)
         if path is not None:
             setattr(args, key, path.resolve())
-    if args.model == "g05":
+    if args.model == "g05" and args.robot_type == "yam":
+        from .yam_g05 import validate_assets
+        try:
+            validate_assets(args.checkpoint, args.source_root, args.processor, args.g05_parts_meta)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            parser.error(str(exc))
+    elif args.model == "g05":
         if not args.checkpoint.is_file() or not (args.source_root / "scripts/serve_policy.py").is_file():
             parser.error("G05 needs a checkpoint file and upstream scripts/serve_policy.py")
     elif not args.checkpoint.is_dir():
@@ -239,6 +250,13 @@ def main(argv=None):
         policy = model_loading.load_lap(args.checkpoint, args.tokenizer)
         from openpi.serving.websocket_policy_server import WebsocketPolicyServer
         WebsocketPolicyServer(policy=policy, host=args.host, port=args.port, metadata=policy.metadata).serve_forever()
+    elif args.robot_type == "yam":
+        from .yam_g05 import G05YAMRuntime
+        runtime = G05YAMRuntime(args.checkpoint, source_root=args.source_root, processor=args.processor,
+                                parts_meta=args.g05_parts_meta, device=args.device,
+                                native_attention=args.g05_native_attention)
+        with HTTPServer((args.host, args.port), http_handler(runtime)) as server:
+            server.serve_forever()
     else:
         run_g05(args)
 

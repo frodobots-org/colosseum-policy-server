@@ -289,3 +289,98 @@ Restart the worker after changing the command. Startup logs show
 only the packer's `video_modality_keys` in memory; checkpoint files, image names,
 state/action order and normalization are unchanged. The training-time camera
 order is not established by this option; treat it as an A/B variant.
+
+## G05 YAM
+
+`RoboColosseum/G05-MolmoAct2-YAM` at
+`685add3f748f823c49889f092f6c3cceabcae062` uses GalaxeaVLA, not LeRobot's
+PI05/GR00T policy loader. The bridge exposes the same HTTP `/act` YAM protocol:
+14-D absolute joint positions and continuous [0, 1] grippers, with **32-step**
+chunks at nominal 30 Hz. Cameras map top/left/right to
+`head_rgb/left_wrist_rgb/right_wrist_rgb` as CHW uint8; state maps to named
+`left_arm`, `left_gripper`, `right_arm`, `right_gripper` groups without inversion.
+
+Internally the saved recipe uses `RelativeJointTransform` for both arms, a 27-D
+grouped/padded layout, stepwise normalization and ActionCodec. The bridge calls
+the upstream `PolicyInferencer`, including its postprocessor, so actions are
+unnormalized and converted back to absolute joints exactly once. Missing action
+parts, unexpected dimensions, nonfinite values and out-of-range grippers fail.
+The saved Hydra config selects Qwen3.5, even though the model README describes
+Qwen2.5; use the saved architecture configuration.
+
+The training `configs/data/parts_meta/yam.yaml` is published at checkpoint
+revision `26c91270ce33325a29990b3ff7ea7a4b47bd4ec1`. That revision adds the metadata
+and updates the README; the model weights and saved model configuration are
+unchanged from the registered revision above. A copy is included in this repo at
+`configs/data/parts_meta/yam.yaml`. It maps each 6-D arm into a 9-D control slot,
+with 1-D grippers and an absent 7-D lower-body slot.
+
+Supply `--g05-parts-meta` explicitly when using an older snapshot. Otherwise,
+the worker checks the checkpoint's `configs/data/parts_meta/yam.yaml`, then the
+same path in the upstream source checkout. Missing metadata fails before loading
+weights. Use `OpenGalaxea/GalaxeaVLA@89f2322b4ad016e192437adc1a2c253b05bab246`
+for the upstream serving implementation inspected here.
+
+In a GalaxeaVLA environment matching that revision, install this Policy Server
+package (`uv pip install --python /path/to/GalaxeaVLA/.venv/bin/python -e .`).
+Provision the downloaded checkpoint directory, original parts metadata and local
+Qwen3.5 processor assets, then run:
+
+```bash
+/path/to/GalaxeaVLA/.venv/bin/colosseum-policy-model g05 --robot-type yam \
+  --checkpoint /absolute/path/to/G05-MolmoAct2-YAM \
+  --source-root /absolute/path/to/GalaxeaVLA \
+  --processor /absolute/path/to/qwen3_5_2b_base_processor \
+  --g05-parts-meta /absolute/path/to/colosseum-policy-server/configs/data/parts_meta/yam.yaml \
+  --port 8205
+```
+
+The bridge stages config/asset links in a temporary directory and uses the
+upstream loader/setup helpers. It retains the checkpoint's discrete/continuous
+head choices, disables compilation, and uses the same SDPA vision fallback as
+our existing G05 worker (`--g05-native-attention` opts out). It does not modify
+checkpoint files. Use `configs/local-runtime-yam-g05.yaml.example` for Local
+Policy; Router-backed evaluation needs matching Router registration.
+
+The matching processor directory is published under
+`OpenGalaxea/G05/qwen3_5_2b_base_processor` at revision
+`e312be81e90c56a55bcb26b57429bd39a335b449`. Download it separately with an HF
+account authorized to access the base repository:
+
+```bash
+hf download OpenGalaxea/G05 --revision e312be81e90c56a55bcb26b57429bd39a335b449 \
+  --include 'qwen3_5_2b_base_processor/*' --local-dir models/G05-base-assets
+```
+
+Confirm the intended inference head with the author: the saved config enables both
+`discrete_action` and `continuous_action` and returns continuous actions, whereas
+the model card reports token cross-entropy training. The bridge currently retains
+the saved choices rather than guessing a head override.
+
+Tests use mocked upstream model/processor objects and synthetic network traffic.
+They do not establish checkpoint loading, dependency compatibility, GPU behavior,
+or physical robot performance.
+
+### Download the YAM checkpoints
+
+Install the Hugging Face CLI in a download environment, then download **all**
+files (including `.hydra` for G05 and processor statistics for pi05):
+
+```bash
+hf download RoboColosseum/G05-MolmoAct2-YAM \
+  --revision 26c91270ce33325a29990b3ff7ea7a4b47bd4ec1 \
+  --local-dir models/G05-MolmoAct2-YAM
+hf download NUSMAGIC/pi05-MolmoAct2-YAM \
+  --revision 2f28d00ac28c543626f5a4f579a3da09bee4a4ed \
+  --local-dir models/pi05-MolmoAct2-YAM
+```
+
+The snapshots are approximately 11.95 GB and 9.35 GB respectively. Tokenizer /
+processor assets are separate; downloading model weights alone does not make a
+worker runnable.
+
+Sources: [G05 snapshot](https://huggingface.co/RoboColosseum/G05-MolmoAct2-YAM/tree/685add3f748f823c49889f092f6c3cceabcae062),
+[saved data recipe](https://huggingface.co/RoboColosseum/G05-MolmoAct2-YAM/blob/685add3f748f823c49889f092f6c3cceabcae062/data_yam_full.yaml),
+[upstream serving](https://github.com/OpenGalaxea/GalaxeaVLA/blob/89f2322b4ad016e192437adc1a2c253b05bab246/scripts/serve_policy.py).
+
+Training metadata source: [published YAM parts layout](https://huggingface.co/RoboColosseum/G05-MolmoAct2-YAM/blob/26c91270ce33325a29990b3ff7ea7a4b47bd4ec1/configs/data/parts_meta/yam.yaml).

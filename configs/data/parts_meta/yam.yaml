@@ -1,0 +1,19 @@
+# Bimanual YAM (6-DoF arms) into the pretrained 27-dim ActionCodec layout:
+#   left_control(9) | left_gripper(1) | right_control(9) | right_gripper(1) | lower_body(7)
+# The 9-dim *_ee_pose alternatives size the control slots at 9, so the 6-dim
+# joints are right-padded into them. lower_body is absent for YAM.
+parts_meta:
+  left_arm: 6
+  right_arm: 6
+  left_gripper: 1
+  right_gripper: 1
+  left_ee_pose: 9
+  right_ee_pose: 9
+  lower_body: 7
+
+merge_spec:
+  left_control: [left_arm, left_ee_pose]
+  left_gripper: [left_gripper]
+  right_control: [right_arm, right_ee_pose]
+  right_gripper: [right_gripper]
+  lower_body: [lower_body]

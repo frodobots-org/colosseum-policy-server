@@ -1,0 +1,37 @@
+host: 127.0.0.1
+port: 8000
+backend:
+  name: vla
+  options:
+    http_timeout_seconds: 60
+models:
+  - name: g05-yam
+    model_type: vla
+    url: https://huggingface.co/RoboColosseum/G05-MolmoAct2-YAM
+    revision: 685add3f748f823c49889f092f6c3cceabcae062
+    runtime_profile: g05-yam-v1
+    action_space: joint_position
+    action_dim: 14
+    control_hz: 30
+    max_horizon: 32
+    endpoint: http://127.0.0.1:8205
+    backend_options:
+      robot_type: yam
+      adapter: g05_yam
+    # Requires published training parts metadata and local Qwen3.5 processor
+    # assets. See docs/yam.md. The registered weight revision stays unchanged.
+    # launcher:
+    #   - /absolute/path/to/GalaxeaVLA/.venv/bin/colosseum-policy-model
+    #   - g05
+    #   - --robot-type
+    #   - yam
+    #   - --checkpoint
+    #   - /absolute/path/to/G05-MolmoAct2-YAM
+    #   - --source-root
+    #   - /absolute/path/to/GalaxeaVLA
+    #   - --processor
+    #   - /absolute/path/to/qwen3_5_2b_base_processor
+    #   - --g05-parts-meta
+    #   - /absolute/path/to/colosseum-policy-server/configs/data/parts_meta/yam.yaml
+    #   - --port
+    #   - "8205"
