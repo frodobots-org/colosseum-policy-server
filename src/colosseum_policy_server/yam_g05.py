@@ -4,6 +4,7 @@ Use the published training parts_meta/yam.yaml rather than guessing the
 14-to-27-D padding/group layout.
 """
 from copy import deepcopy
+import logging
 import os
 from pathlib import Path
 import runpy
@@ -11,6 +12,8 @@ import tempfile
 
 import numpy as np
 import yaml
+
+log = logging.getLogger(__name__)
 
 
 def validate_assets(checkpoint, source_root, processor, parts_meta=None):
@@ -121,6 +124,12 @@ class G05YAMRuntime:
             cfg.model.processor.tokenizer_params.pretrained_model_name_or_path = str(processor)
             upstream['filter_embodiment'](cfg, 'yam')
             policy, self.processor = upstream['setup'](cfg, device=device)
+            # Pinned G05 generate_action returns FM in `action` whenever
+            # continuous_action is enabled, but inferencer still attaches AR
+            # absence metadata. That metadata does not describe the FM tensor.
+            self.continuous_output = getattr(policy, 'continuous_action', False) is True
+            self._reported_ar_absence = False
+            log.info('G05 YAM output branch: %s', 'continuous/FM' if self.continuous_output else 'discrete/AR')
             self.inferencer = upstream['PolicyInferencer'](policy, self.processor, device=device)
             self.build_obs = upstream['build_obs_dict']
         finally:
@@ -149,8 +158,17 @@ class G05YAMRuntime:
         if not isinstance(results, list) or len(results) != 1:
             raise ValueError('G05 must return one postprocessed action dictionary')
         result = results[0]
-        if result.get('_absent_keys'):
-            raise ValueError('G05 returned absent action parts; refusing partial robot commands')
+        absent = set(result.get('_absent_keys') or ())
+        if absent and self.continuous_output:
+            if not self._reported_ar_absence:
+                log.warning('G05 AR branch absent groups: %s; returned actions use continuous/FM. '
+                            'Validating all four YAM output parts independently.', sorted(absent))
+                self._reported_ar_absence = True
+        elif absent - {'lower_body'}:
+            # lower_body is not part of the YAM embodiment. Required arm/gripper
+            # groups remain fatal for discrete output, including unknown groups.
+            raise ValueError(f'G05 discrete/AR output has absent action groups: '
+                             f'{sorted(absent)}; refusing partial robot commands')
         arrays = []
         for key, start, end in self.parts:
             value = result.get(key)

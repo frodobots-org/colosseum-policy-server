@@ -305,6 +305,11 @@ grouped/padded layout, stepwise normalization and ActionCodec. The bridge calls
 the upstream `PolicyInferencer`, including its postprocessor, so actions are
 unnormalized and converted back to absolute joints exactly once. Missing action
 parts, unexpected dimensions, nonfinite values and out-of-range grippers fail.
+The pinned upstream returns FM actions when `continuous_action` is enabled,
+but attaches AR absence metadata even to FM output. The bridge logs that AR
+metadata separately and validates every returned YAM part. For discrete output,
+absent arm/gripper or unknown groups still fail; only the unused `lower_body`
+group may be absent. No missing YAM commands are filled or synthesized.
 The saved Hydra config selects Qwen3.5, even though the model README describes
 Qwen2.5; use the saved architecture configuration.
 

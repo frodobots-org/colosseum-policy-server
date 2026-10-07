@@ -206,3 +206,37 @@ def test_tokenizer_aliases_survive_upstream_sidecar_updates(assets):
                  cfg.model.model_arch.AT_CONFIG):
         assert OmegaConf.to_container(node, resolve=True) == expected
     assert (ckpt / '.hydra/config.yaml').read_text() == original
+
+
+@pytest.mark.parametrize('absent,continuous,accepted', [
+    ({'lower_body'}, False, True),
+    ({'left_gripper', 'lower_body'}, False, False),
+    ({'left_control'}, False, False),
+    ({'unknown_group'}, False, False),
+    ({'left_gripper', 'right_gripper', 'lower_body'}, True, True),
+])
+def test_absence_metadata_follows_output_branch(runtime, absent, continuous, accepted):
+    worker, _ = runtime
+    worker.continuous_output = continuous
+    result = {k: np.zeros((1, 32, e-s), np.float32) for k,s,e in worker.parts}
+    result['_absent_keys'] = absent
+    worker.inferencer.infer = lambda obs: [result]
+    if accepted:
+        assert worker.infer(payload())['actions'].shape == (32, 14)
+    else:
+        with pytest.raises(ValueError, match='discrete/AR.*absent action groups'):
+            worker.infer(payload())
+
+
+@pytest.mark.parametrize('bad', ['missing', 'shape', 'nan', 'gripper'])
+def test_continuous_output_still_checks_required_parts(runtime, bad):
+    worker, _ = runtime
+    worker.continuous_output = True
+    result = {k: np.zeros((1, 32, e-s), np.float32) for k,s,e in worker.parts}
+    result['_absent_keys'] = {'left_gripper', 'right_gripper', 'lower_body'}
+    if bad == 'missing': del result['right_gripper']
+    elif bad == 'shape': result['left_arm'] = np.zeros((1, 32, 9), np.float32)
+    elif bad == 'nan': result['left_arm'][0, 0, 0] = np.nan
+    else: result['left_gripper'][0, 0, 0] = 1.1
+    worker.inferencer.infer = lambda obs: [result]
+    with pytest.raises(ValueError): worker.infer(payload())
