@@ -304,7 +304,10 @@ Internally the saved recipe uses `RelativeJointTransform` for both arms, a 27-D
 grouped/padded layout, stepwise normalization and ActionCodec. The bridge calls
 the upstream `PolicyInferencer`, including its postprocessor, so actions are
 unnormalized and converted back to absolute joints exactly once. Missing action
-parts, unexpected dimensions, nonfinite values and out-of-range grippers fail.
+parts, unexpected dimensions and nonfinite values fail. Finite postprocessed
+gripper targets are clipped to [0, 1] with a warning containing the side, count,
+raw range and first affected chunk index. Arm joints are not clipped. Input
+gripper state still must be within [0, 1].
 The pinned upstream returns FM actions when `continuous_action` is enabled,
 but attaches AR absence metadata even to FM output. The bridge logs that AR
 metadata separately and validates every returned YAM part. For discrete output,

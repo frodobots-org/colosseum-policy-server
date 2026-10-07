@@ -13,7 +13,6 @@ import tempfile
 import numpy as np
 import yaml
 
-from .model_adapters.bounds import check_bounds
 
 log = logging.getLogger(__name__)
 
@@ -181,6 +180,16 @@ class G05YAMRuntime:
                 raise ValueError(f'G05 {key} must be finite with shape (1, 32, {end-start})')
             arrays.append(array[0])
         actions = np.concatenate(arrays, axis=1)
-        check_bounds(actions[:, [6, 13]], 0, 1, ('left_gripper', 'right_gripper'),
-                     'G05 returned grippers outside [0, 1]')
+        # Only saturate finite, postprocessed gripper targets. Keep all arm
+        # joints unchanged and reject nonfinite/missing values above.
+        for column, label in ((6, 'left_gripper'), (13, 'right_gripper')):
+            values = actions[:, column]
+            outside = (values < 0) | (values > 1)
+            if np.any(outside):
+                first = int(np.flatnonzero(outside)[0])
+                log.warning('G05 clipped %s to [0, 1]: count=%d raw_min=%.6f '
+                            'raw_max=%.6f first_action_index=%d target=%.6f clipped=%.6f',
+                            label, int(outside.sum()), float(values.min()), float(values.max()),
+                            first, float(values[first]), float(np.clip(values[first], 0, 1)))
+                np.clip(values, 0, 1, out=values)
         return {'actions': actions}

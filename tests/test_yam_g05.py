@@ -92,7 +92,7 @@ def test_raw_inputs_and_absolute_output(runtime):
         np.testing.assert_array_equal(raw['state'][key], payload()['state'][start:end])
 
 
-@pytest.mark.parametrize('bad', ['missing','absent','shape','nan','gripper'])
+@pytest.mark.parametrize('bad', ['missing','absent','shape','nan','gripper_inf'])
 def test_reject_invalid_output(runtime, bad):
     worker, _ = runtime
     result = {k: np.zeros((1,32,e-s),np.float32) for k,s,e in worker.parts}
@@ -100,7 +100,7 @@ def test_reject_invalid_output(runtime, bad):
     elif bad == 'absent': result['_absent_keys'] = {'right_gripper'}
     elif bad == 'shape': result['left_arm'] = np.zeros((1,32,9))
     elif bad == 'nan': result['left_arm'][0,0,0] = np.nan
-    else: result['right_gripper'][0,0,0] = 1.1
+    else: result['right_gripper'][0,0,0] = np.inf
     worker.inferencer.infer = lambda obs: [result]
     with pytest.raises(ValueError): worker.infer(payload())
 
@@ -228,7 +228,7 @@ def test_absence_metadata_follows_output_branch(runtime, absent, continuous, acc
             worker.infer(payload())
 
 
-@pytest.mark.parametrize('bad', ['missing', 'shape', 'nan', 'gripper'])
+@pytest.mark.parametrize('bad', ['missing', 'shape', 'nan', 'gripper_inf'])
 def test_continuous_output_still_checks_required_parts(runtime, bad):
     worker, _ = runtime
     worker.continuous_output = True
@@ -237,21 +237,36 @@ def test_continuous_output_still_checks_required_parts(runtime, bad):
     if bad == 'missing': del result['right_gripper']
     elif bad == 'shape': result['left_arm'] = np.zeros((1, 32, 9), np.float32)
     elif bad == 'nan': result['left_arm'][0, 0, 0] = np.nan
-    else: result['left_gripper'][0, 0, 0] = 1.1
+    else: result['left_gripper'][0, 0, 0] = np.inf
     worker.inferencer.infer = lambda obs: [result]
     with pytest.raises(ValueError): worker.infer(payload())
 
 
-def test_gripper_error_reports_side_step_and_value(runtime, caplog):
+@pytest.mark.parametrize('continuous', [True, False])
+def test_gripper_clipping_preserves_joints_and_input(runtime, caplog, continuous):
     worker, _ = runtime
-    result = {k: np.zeros((1, 32, e-s), np.float32) for k,s,e in worker.parts}
+    worker.continuous_output = continuous
+    result = {k: np.full((1, 32, e-s), -2.5 if 'arm' in k else .4, np.float32)
+              for k,s,e in worker.parts}
     result['left_gripper'][0, 3, 0] = -0.02
     result['right_gripper'][0, 17, 0] = 1.25
     worker.inferencer.infer = lambda obs: [result]
-    with pytest.raises(ValueError) as exc:
+    actions = worker.infer(payload())['actions']
+    assert actions[3, 6] == 0 and actions[17, 13] == 1
+    np.testing.assert_array_equal(actions[:, [0,1,2,3,4,5,7,8,9,10,11,12]], -2.5)
+    assert actions[0, 6] == np.float32(.4) and actions[0, 13] == np.float32(.4)
+    assert result['right_gripper'][0, 17, 0] == np.float32(1.25)
+    assert 'left_gripper to [0, 1]' in caplog.text
+    assert 'first_action_index=3 target=-0.020000 clipped=0.000000' in caplog.text
+    assert 'first_action_index=17 target=1.250000 clipped=1.000000' in caplog.text
+
+
+@pytest.mark.parametrize('value', [np.nan, np.inf, -np.inf])
+@pytest.mark.parametrize('key', ['left_gripper', 'right_gripper'])
+def test_nonfinite_grippers_are_never_clipped(runtime, value, key):
+    worker, _ = runtime
+    result = {k: np.zeros((1, 32, e-s), np.float32) for k,s,e in worker.parts}
+    result[key][0, 0, 0] = value
+    worker.inferencer.infer = lambda obs: [result]
+    with pytest.raises(ValueError, match=key + ' must be finite'):
         worker.infer(payload())
-    message = str(exc.value)
-    assert 'action_index=3 left_gripper: target=-0.020000' in message
-    assert 'action_index=17 right_gripper: target=1.250000' in message
-    assert 'low=0.000000, high=1.000000' in message
-    assert message in caplog.text
