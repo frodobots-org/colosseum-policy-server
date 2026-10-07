@@ -112,3 +112,180 @@ Offline tests exercise all three provider wire formats with the actual pinned
 Inspect agent and mocked HTTP replies, including Protobuf action plans, both
 arm indices, continuous grippers and stop handling. No live provider call or
 physical YAM execution was performed.
+
+## MolmoAct2 vs GR00T YAM deployment
+
+The additional `groot_yam` adapter uses the same three-camera `/act` wire format.
+The registered checkpoint is **LeRobot format**, not an Isaac-GR00T native
+checkpoint: `NUSMAGIC/GR00T-N1.7-MolmoAct2-YAM` at
+`5ba9c403bdb962b88c39f843da536eb8370b61b2`. Its saved configuration declares
+`new_embodiment`, absolute 14-D actions, 16-step chunks and
+`observation.images.top/left/right`. The worker uses the checkpoint's saved
+pre/postprocessors, including normalization and action unnormalization.
+Do not load this snapshot through the Franka GR00T native worker.
+
+Use separate GPU environments for MolmoAct2 and GR00T. Keep the lightweight
+local Policy Server in its own environment. For the LeRobot GR00T environment,
+the upstream source inspected for this integration is
+`huggingface/lerobot@8c920c4270460851cedd2737657584586d3dc66f`:
+
+```bash
+# From the Policy Server repository; native/CUDA dependencies may need rig-specific setup.
+uv venv --python 3.12 .venv-groot-yam
+uv pip install --python .venv-groot-yam/bin/python \
+  'lerobot[groot] @ git+https://github.com/huggingface/lerobot.git@8c920c4270460851cedd2737657584586d3dc66f'
+uv pip install --python .venv-groot-yam/bin/python -e .
+```
+
+Provision local snapshots before starting the offline worker:
+
+- YAM fine-tune above, including `config.json`, `model.safetensors`, both
+  processor JSON files and both processor state safetensors.
+- `nvidia/GR00T-N1.7-3B` base model with its required local/cached dependencies.
+- `Qwen/Qwen3-VL-2B-Instruct` tokenizer/processor assets matching the checkpoint.
+
+The worker disables Hub downloads; missing base/backbone assets fail at startup.
+GPU installation, memory requirements and live checkpoint loading have **not**
+been validated here. The loader/processor calls are covered with mocked models.
+
+```bash
+# In its GPU environment, with actual local asset paths:
+.venv-groot-yam/bin/colosseum-policy-model groot_n17 --robot-type yam \
+  --checkpoint /absolute/path/to/GR00T-N1.7-MolmoAct2-YAM \
+  --base-model /absolute/path/to/GR00T-N1.7-3B \
+  --processor /absolute/path/to/Qwen3-VL-2B-Instruct --port 8203
+```
+
+First test each worker separately, without opening CAN or cameras (the model
+receives black images and synthetic state; this is protocol/inference validation,
+not a task-performance test):
+
+```bash
+uv run --no-sync python scripts/check_yam_worker.py \
+  --endpoint http://127.0.0.1:8202 --max-horizon 30
+uv run --no-sync python scripts/check_yam_worker.py \
+  --endpoint http://127.0.0.1:8203 --max-horizon 16
+```
+
+For Router A/B evaluation:
+
+```bash
+cp -n configs/local-runtime-yam-vla-pair.yaml.example configs/local-runtime-yam-vla-pair.yaml
+uv run --no-sync colosseum-policy-local --config configs/local-runtime-yam-vla-pair.yaml
+```
+
+If both workers do not fit in GPU memory, use the config's `launcher` lists to
+start them on demand. Fill absolute environment and asset paths for **both**
+entries, stop manually launched workers first, and invoke the model executable
+directly. Avoid `bash`/`uv run` wrappers which may leave GPU child processes alive.
+The supervisor only owns the process it launches; it does not stop separately
+started services. Model cold starts may require increasing
+`start_timeout_seconds` (e.g. 600) and Client `prepare_timeout`.
+
+Copy your existing working YAM Client config to a separate VLA config and set
+`llm_api_keys: {}` at the top level, so Router assigns VLA candidates. Do not
+resume an existing LLM assignment. Keep your measured CAN, camera and gripper
+settings. Start with:
+
+```bash
+uv run --no-sync colosseum-robot configs/robot.yam-vla.yaml --no-execute-action
+```
+
+Do not loosen Client `joint_max_step` merely to silence rejection. For execution,
+confirm each model's absolute joint commands, gripper polarity and target changes
+on the rig first. A configured 30 Hz is nominal; capture and inference can reduce
+actual frequency. For pi05 YAM, use the dedicated setup below.
+
+## pi05 YAM
+
+`NUSMAGIC/pi05-MolmoAct2-YAM` at
+`2f28d00ac28c543626f5a4f579a3da09bee4a4ed` is a LeRobot pi05 fine-tune:
+absolute 14-D actions, 30-step chunks at 30 Hz, continuous grippers in [0, 1].
+State/action order is left six joints, left gripper, right six joints, right
+gripper. This uses `adapter: pi05_yam`, HTTP `/act`, and the YAM embodiment;
+the existing Franka/DROID pi05 WebSocket/velocity worker is a different contract.
+
+The worker loads both saved processor pipelines and their safetensors statistics.
+These perform QUANTILES state/action normalization, state-to-language preparation,
+PaliGemma tokenization, and action unnormalization. Do not supply DROID `--stats`.
+Camera features retain checkpoint order **top, left, right**. RGB uint8 input is
+converted to CHW float [0, 1], then the upstream policy applies its resize/padding
+and [-1, 1] transform. The checkpoint declares 640x360 training images; the Client
+uses 640x480, so verify actual camera framing against training before hardware use.
+The worker does not invent a crop to resolve that difference.
+
+Use the inspected LeRobot revision (the strict loader uses its key conversion
+helpers):
+
+```bash
+uv venv --python 3.12 .venv-pi05-yam
+uv pip install --python .venv-pi05-yam/bin/python \
+  'lerobot[pi] @ git+https://github.com/huggingface/lerobot.git@8c920c4270460851cedd2737657584586d3dc66f'
+uv pip install --python .venv-pi05-yam/bin/python -e .
+```
+
+Provision the full checkpoint snapshot, including `model.safetensors`,
+`config.json`, both processor JSON files and both processor statistics files.
+Also provision a local `google/paligemma-3b-pt-224` tokenizer directory (access to
+that upstream repository may require accepting its terms). Worker startup is
+offline. It constructs the policy and loads weights strictly; unreadable or
+incompatible weights raise an error rather than serving an uninitialized model.
+Compilation and gradient checkpointing are disabled for this inference worker.
+
+```bash
+.venv-pi05-yam/bin/colosseum-policy-model pi05_lerobot --robot-type yam \
+  --checkpoint /absolute/path/to/pi05-MolmoAct2-YAM \
+  --tokenizer /absolute/path/to/paligemma-3b-pt-224 \
+  --num-steps 10 --port 8204
+```
+
+`--num-steps` sets diffusion iterations, not the returned action horizon, which
+remains 30. The worker resets policy history for each one-observation request,
+predicts a complete chunk, then postprocesses it once. Invalid/nonfinite actions
+or grippers outside [0, 1] are rejected, not silently clipped.
+
+Use `configs/local-runtime-yam-pi05.yaml.example` as the Local Policy config, or
+copy its model entry into a multi-model config. Its commented launcher uses the
+model environment executable directly. Router-backed evaluation additionally
+requires a matching Router model registration/runtime profile; this code change
+does not register or deploy it.
+
+Test the worker without opening robot hardware:
+
+```bash
+.venv/bin/python scripts/check_yam_worker.py --endpoint http://127.0.0.1:8204 --max-horizon 30
+```
+
+Repository tests cover mocked loading/processors, validation and HTTP/WebSocket
+relay routing. Real checkpoint/GPU inference, installation compatibility and
+physical task performance are not validated by those tests. The synthetic worker
+check above is also not a hardware or task-performance test.
+
+Sources: [checkpoint config](https://huggingface.co/NUSMAGIC/pi05-MolmoAct2-YAM/blob/2f28d00ac28c543626f5a4f579a3da09bee4a4ed/config.json),
+[saved preprocessor](https://huggingface.co/NUSMAGIC/pi05-MolmoAct2-YAM/blob/2f28d00ac28c543626f5a4f579a3da09bee4a4ed/policy_preprocessor.json),
+[LeRobot policy](https://github.com/huggingface/lerobot/blob/8c920c4270460851cedd2737657584586d3dc66f/src/lerobot/policies/pi05/modeling_pi05.py).
+
+### GR00T camera-order comparison
+
+The default `--groot-camera-order checkpoint` preserves the saved processor.
+For the pinned YAM checkpoint, `video_modality_keys: null` makes the inspected
+LeRobot packer sort camera keys as left, right, top. To test an explicit
+**top, left, right** order, append this to the GR00T YAM worker command:
+
+```bash
+--groot-camera-order top-left-right
+```
+
+For a Local Policy `launcher:` list, append these two arguments:
+
+```yaml
+      - --groot-camera-order
+      - top-left-right
+```
+
+Restart the worker after changing the command. Startup logs show
+`GR00T YAM camera order mode: top-left-right`. Remove the arguments or use
+`--groot-camera-order checkpoint` to restore the saved behavior. This overrides
+only the packer's `video_modality_keys` in memory; checkpoint files, image names,
+state/action order and normalization are unchanged. The training-time camera
+order is not established by this option; treat it as an A/B variant.

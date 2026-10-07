@@ -1,0 +1,116 @@
+{
+    "type": "pi05",
+    "n_obs_steps": 1,
+    "input_features": {
+        "observation.images.top": {
+            "type": "VISUAL",
+            "shape": [
+                3,
+                360,
+                640
+            ]
+        },
+        "observation.images.left": {
+            "type": "VISUAL",
+            "shape": [
+                3,
+                360,
+                640
+            ]
+        },
+        "observation.images.right": {
+            "type": "VISUAL",
+            "shape": [
+                3,
+                360,
+                640
+            ]
+        },
+        "observation.state": {
+            "type": "STATE",
+            "shape": [
+                14
+            ]
+        }
+    },
+    "output_features": {
+        "action": {
+            "type": "ACTION",
+            "shape": [
+                14
+            ]
+        }
+    },
+    "device": "cuda",
+    "use_amp": false,
+    "use_peft": false,
+    "push_to_hub": false,
+    "repo_id": null,
+    "private": null,
+    "tags": null,
+    "license": null,
+    "pretrained_path": "lerobot/pi05_base",
+    "pretrained_revision": null,
+    "paligemma_variant": "gemma_2b",
+    "action_expert_variant": "gemma_300m",
+    "dtype": "bfloat16",
+    "chunk_size": 30,
+    "n_action_steps": 30,
+    "max_state_dim": 32,
+    "max_action_dim": 32,
+    "num_inference_steps": 10,
+    "time_sampling_beta_alpha": 1.5,
+    "time_sampling_beta_beta": 1.0,
+    "time_sampling_scale": 0.999,
+    "time_sampling_offset": 0.001,
+    "min_period": 0.004,
+    "max_period": 4.0,
+    "use_relative_actions": false,
+    "relative_exclude_joints": [
+        "gripper"
+    ],
+    "action_feature_names": [
+        "left_joint_0.pos",
+        "left_joint_1.pos",
+        "left_joint_2.pos",
+        "left_joint_3.pos",
+        "left_joint_4.pos",
+        "left_joint_5.pos",
+        "left_gripper.pos",
+        "right_joint_0.pos",
+        "right_joint_1.pos",
+        "right_joint_2.pos",
+        "right_joint_3.pos",
+        "right_joint_4.pos",
+        "right_joint_5.pos",
+        "right_gripper.pos"
+    ],
+    "rtc_config": null,
+    "image_resolution": [
+        224,
+        224
+    ],
+    "empty_cameras": 0,
+    "tokenizer_max_length": 200,
+    "normalization_mapping": {
+        "VISUAL": "IDENTITY",
+        "STATE": "QUANTILES",
+        "ACTION": "QUANTILES"
+    },
+    "gradient_checkpointing": true,
+    "compile_model": true,
+    "compile_mode": "max-autotune",
+    "freeze_vision_encoder": false,
+    "train_expert_only": false,
+    "optimizer_lr": 2.5e-05,
+    "optimizer_betas": [
+        0.9,
+        0.95
+    ],
+    "optimizer_eps": 1e-08,
+    "optimizer_weight_decay": 0.01,
+    "optimizer_grad_clip_norm": 1.0,
+    "scheduler_warmup_steps": 1000,
+    "scheduler_decay_steps": 100000,
+    "scheduler_decay_lr": 2.5e-06
+}

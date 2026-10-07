@@ -24,12 +24,14 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("model", choices=["molmoact2", "pi05_lerobot", "groot_n17", "lap_3b", "g05"])
     parser.add_argument("--robot-type", choices=["franka", "yam"], default="franka",
-                        help="MolmoAct2/GR00T embodiment (default: franka)")
+                        help="MolmoAct2/GR00T/pi05 embodiment (default: franka)")
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--tokenizer", type=Path)
     parser.add_argument("--stats", type=Path)
     parser.add_argument("--processor", type=Path)
     parser.add_argument("--base-model", type=Path, help="local GR00T N1.7 base snapshot for LeRobot YAM")
+    parser.add_argument("--groot-camera-order", choices=["checkpoint", "top-left-right"], default="checkpoint",
+                        help="GR00T YAM camera packing; top-left-right is an experimental override")
     parser.add_argument("--source-root", type=Path, help="installed G05 upstream source checkout")
     parser.add_argument("--host", default="127.0.0.1", choices=["127.0.0.1", "localhost"])
     parser.add_argument("--port", type=int, required=True)
@@ -40,14 +42,20 @@ def parse_args(argv=None):
                         help="back up and patch the selected Molmo model source with deployed dtype fixes")
     parser.add_argument("--g05-native-attention", action="store_true", help="disable deployed G05 SDPA override")
     args = parser.parse_args(argv)
+    if args.groot_camera_order != "checkpoint" and (args.model != "groot_n17" or args.robot_type != "yam"):
+        parser.error("--groot-camera-order top-left-right requires groot_n17 --robot-type yam")
     if not 1 <= args.port <= 65535 or not 1 <= args.num_steps <= 10:
         parser.error("port must be valid and --num-steps must be in [1, 10]")
-    if args.robot_type != "franka" and args.model not in {"molmoact2", "groot_n17"}:
-        parser.error("--robot-type yam is implemented only for molmoact2 and groot_n17")
+    if args.robot_type != "franka" and args.model not in {"molmoact2", "groot_n17", "pi05_lerobot"}:
+        parser.error("--robot-type yam is implemented only for molmoact2, groot_n17 and pi05_lerobot")
     required = {"molmoact2": [], "pi05_lerobot": ["tokenizer", "stats"],
                 "groot_n17": ["processor"], "lap_3b": ["tokenizer"], "g05": ["source_root"]}
     if args.model == "groot_n17" and args.robot_type == "yam":
         required["groot_n17"] = ["processor", "base_model"]
+    if args.model == "pi05_lerobot" and args.robot_type == "yam":
+        required["pi05_lerobot"] = ["tokenizer"]
+        if args.stats is not None:
+            parser.error("pi05 YAM uses saved checkpoint processors; omit --stats (DROID only)")
     for key in ["checkpoint", *required[args.model]]:
         path = getattr(args, key)
         if path is None or not path.exists():
@@ -63,7 +71,9 @@ def parse_args(argv=None):
         parser.error("--checkpoint must be a local directory")
     if args.model == "lap_3b" and not args.tokenizer.is_file():
         parser.error("LAP --tokenizer must be the tokenizer.model file")
-    if args.model == "pi05_lerobot" and (not args.tokenizer.is_dir() or not args.stats.is_file()):
+    if args.model == "pi05_lerobot" and not args.tokenizer.is_dir():
+        parser.error("pi05 needs a local tokenizer directory")
+    if args.model == "pi05_lerobot" and args.robot_type == "franka" and not args.stats.is_file():
         parser.error("pi05 needs a tokenizer directory and a statistics JSON file")
     if args.model == "groot_n17" and not args.processor.is_dir():
         parser.error("GR00T --processor must be a local processor directory")
@@ -199,6 +209,13 @@ def main(argv=None):
         with HTTPServer((args.host, args.port), http_handler(runtime)) as server:
             server.serve_forever()
     elif args.model == "pi05_lerobot":
+        if args.robot_type == "yam":
+            from .yam_pi05 import Pi05YAMRuntime
+            runtime = Pi05YAMRuntime(args.checkpoint, args.tokenizer,
+                                    device=args.device, num_steps=args.num_steps)
+            with HTTPServer((args.host, args.port), http_handler(runtime)) as server:
+                server.serve_forever()
+            return
         runtime = model_loading.Pi05Runtime(args.checkpoint, args.tokenizer, args.stats,
                                            device=args.device, num_steps=args.num_steps)
         asyncio.run(serve_pi05(runtime, args.host, args.port, args.num_steps))
@@ -206,7 +223,8 @@ def main(argv=None):
         if args.robot_type == "yam":
             from .yam_groot import GrootYAMRuntime
             runtime = GrootYAMRuntime(args.checkpoint, base_model=args.base_model,
-                                      processor=args.processor, device=args.device)
+                                      processor=args.processor, device=args.device,
+                                      camera_order=args.groot_camera_order)
             with HTTPServer((args.host, args.port), http_handler(runtime)) as server:
                 server.serve_forever()
             return

@@ -10,7 +10,7 @@ from ..model_adapters.robots import session_robot
 
 
 def load_model_adapter(name, options):
-    if name in {'molmoact2_yam', 'groot_yam'}:
+    if name in {'molmoact2_yam', 'groot_yam', 'pi05_yam'}:
         from ..model_adapters.yam_vla import YAMVLAAdapter
         return YAMVLAAdapter(options)
     if name in _ADAPTERS:

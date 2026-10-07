@@ -1,0 +1,35 @@
+host: 127.0.0.1
+port: 8000
+backend:
+  name: vla
+  options:
+    http_timeout_seconds: 30
+models:
+  - name: pi05-yam
+    model_type: vla
+    url: https://huggingface.co/NUSMAGIC/pi05-MolmoAct2-YAM
+    revision: 2f28d00ac28c543626f5a4f579a3da09bee4a4ed
+    runtime_profile: pi05-yam-v1
+    action_space: joint_position
+    action_dim: 14
+    control_hz: 30
+    max_horizon: 30
+    endpoint: http://127.0.0.1:8204
+    backend_options:
+      robot_type: yam
+      adapter: pi05_yam
+    # Optional on-demand launch. Replace all paths with actual absolute paths.
+    # num_steps is configured on the worker, not per HTTP request.
+    # launcher:
+    #   - /absolute/path/to/.venv-pi05-yam/bin/colosseum-policy-model
+    #   - pi05_lerobot
+    #   - --robot-type
+    #   - yam
+    #   - --checkpoint
+    #   - /absolute/path/to/pi05-MolmoAct2-YAM
+    #   - --tokenizer
+    #   - /absolute/path/to/paligemma-3b-pt-224
+    #   - --num-steps
+    #   - "10"
+    #   - --port
+    #   - "8204"

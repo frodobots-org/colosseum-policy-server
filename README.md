@@ -33,8 +33,14 @@ is performed.
 
 For MolmoAct2-BimanualYAM, follow the [YAM setup guide](docs/yam.md) and
 use [the YAM runtime example](configs/local-runtime-yam.yaml.example).
+For MolmoAct2 vs LeRobot GR00T YAM, use the
+[two-model configuration](configs/local-runtime-yam-vla-pair.yaml.example) and
+[deployment guide](docs/yam.md#molmoact2-vs-gr00t-yam-deployment).
 For YAM with Grok 4.7, Opus 5.5 or GPT-6 Astra, use the
 [YAM Inspect Agent example](configs/local-runtime-yam-agent.yaml.example).
+For NUSMAGIC pi05-MolmoAct2-YAM, use the
+[pi05 YAM configuration](configs/local-runtime-yam-pi05.yaml.example) and
+[worker setup](docs/yam.md#pi05-yam).
 
 ### Run a Real Robot Policy Server
 
