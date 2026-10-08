@@ -1,0 +1,36 @@
+host: 127.0.0.1
+port: 8000
+start_timeout_seconds: 600
+backend:
+  name: vla
+  options:
+    http_timeout_seconds: 120
+models:
+  - name: lingbot-vla-v2-6b-yam
+    model_type: vla
+    url: https://huggingface.co/helen9975/lingbot-vla-v2-6b-molmoact2-yam
+    revision: af7529f2ea27ff6e77911a98f86c40cfb75d229e
+    runtime_profile: lingbot-vla-v2-6b-yam-v1
+    subfolder: checkpoints/global_step_40000/hf_ckpt
+    action_space: joint_position
+    action_dim: 14
+    control_hz: 30
+    max_horizon: 30
+    endpoint: http://127.0.0.1:8206
+    backend_options:
+      robot_type: yam
+      adapter: lingbot_yam
+    launcher:
+      # Replace this with `command -v colosseum-policy-model` in the GPU env.
+      - /home/ai/miniconda3/envs/lingbot-yam/bin/colosseum-policy-model
+      - lingbot_v2
+      - --robot-type
+      - yam
+      - --checkpoint
+      - /home/ai/colosseum-policy-server/models/lingbot-vla-v2-6b-molmoact2-yam/checkpoints/global_step_40000/hf_ckpt
+      - --source-root
+      - /home/ai/colosseum-policy-server/third_party/lingbot-vla-v2
+      - --processor
+      - /home/ai/colosseum-policy-server/models/Qwen3-VL-4B-Instruct
+      - --port
+      - "8206"

@@ -20,7 +20,7 @@ class YAMVLAAdapter:
         self.timeout = _positive_float(options.get('http_timeout_seconds', 30), 'http_timeout_seconds')
 
     def validate(self, model):
-        if (model.backend_options.get('adapter') not in {'molmoact2_yam', 'groot_yam', 'pi05_yam', 'g05_yam'}
+        if (model.backend_options.get('adapter') not in {'molmoact2_yam', 'groot_yam', 'pi05_yam', 'g05_yam', 'lingbot_yam'}
                 or model.action_space != 'joint_position' or model.action_dim != 14
                 or model.control_hz != 30):
             raise ValueError('YAM VLA requires 14-D joint_position at 30 Hz')

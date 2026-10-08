@@ -22,7 +22,7 @@ MAX_REQUEST_BYTES = 32 * 1024 * 1024
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("model", choices=["molmoact2", "pi05_lerobot", "groot_n17", "lap_3b", "g05"])
+    parser.add_argument("model", choices=["molmoact2", "pi05_lerobot", "groot_n17", "lap_3b", "g05", "lingbot_v2"])
     parser.add_argument("--robot-type", choices=["franka", "yam"], default="franka",
                         help="MolmoAct2/GR00T/pi05 embodiment (default: franka)")
     parser.add_argument("--checkpoint", type=Path, required=True)
@@ -32,7 +32,7 @@ def parse_args(argv=None):
     parser.add_argument("--base-model", type=Path, help="local GR00T N1.7 base snapshot for LeRobot YAM")
     parser.add_argument("--groot-camera-order", choices=["checkpoint", "top-left-right"], default="checkpoint",
                         help="GR00T YAM camera packing; top-left-right is an experimental override")
-    parser.add_argument("--source-root", type=Path, help="installed G05 upstream source checkout")
+    parser.add_argument("--source-root", type=Path, help="installed G05 or LingBot upstream source checkout")
     parser.add_argument("--g05-parts-meta", type=Path, help="original training parts_meta/yam.yaml for G05 YAM")
     parser.add_argument("--host", default="127.0.0.1", choices=["127.0.0.1", "localhost"])
     parser.add_argument("--port", type=int, required=True)
@@ -42,17 +42,22 @@ def parse_args(argv=None):
     parser.add_argument("--patch-molmo-bf16", action="store_true",
                         help="back up and patch the selected Molmo model source with deployed dtype fixes")
     parser.add_argument("--g05-native-attention", action="store_true", help="disable deployed G05 SDPA override")
+    parser.add_argument("--lingbot-compile", action="store_true", help="enable optional LingBot torch.compile")
     args = parser.parse_args(argv)
+    if args.model == "lingbot_v2" and args.robot_type != "yam":
+        parser.error("lingbot_v2 currently supports --robot-type yam only")
+    if args.lingbot_compile and args.model != "lingbot_v2":
+        parser.error("--lingbot-compile requires lingbot_v2")
     if args.groot_camera_order != "checkpoint" and (args.model != "groot_n17" or args.robot_type != "yam"):
         parser.error("--groot-camera-order top-left-right requires groot_n17 --robot-type yam")
     if not 1 <= args.port <= 65535 or not 1 <= args.num_steps <= 10:
         parser.error("port must be valid and --num-steps must be in [1, 10]")
-    if args.robot_type != "franka" and args.model not in {"molmoact2", "groot_n17", "pi05_lerobot", "g05"}:
-        parser.error("--robot-type yam is implemented only for molmoact2, groot_n17, pi05_lerobot and g05")
+    if args.robot_type != "franka" and args.model not in {"molmoact2", "groot_n17", "pi05_lerobot", "g05", "lingbot_v2"}:
+        parser.error("--robot-type yam is implemented only for molmoact2, groot_n17, pi05_lerobot, g05 and lingbot_v2")
     if args.g05_parts_meta is not None and (args.model != "g05" or args.robot_type != "yam"):
         parser.error("--g05-parts-meta requires g05 --robot-type yam")
     required = {"molmoact2": [], "pi05_lerobot": ["tokenizer", "stats"],
-                "groot_n17": ["processor"], "lap_3b": ["tokenizer"], "g05": ["source_root"]}
+                "groot_n17": ["processor"], "lap_3b": ["tokenizer"], "g05": ["source_root"], "lingbot_v2": ["source_root", "processor"]}
     if args.model == "groot_n17" and args.robot_type == "yam":
         required["groot_n17"] = ["processor", "base_model"]
     if args.model == "g05" and args.robot_type == "yam":
@@ -90,6 +95,12 @@ def parse_args(argv=None):
         parser.error("GR00T --processor must be a local processor directory")
     if args.model == "groot_n17" and args.robot_type == "yam" and not args.base_model.is_dir():
         parser.error("--base-model must be a local directory")
+    if args.model == "lingbot_v2":
+        from .yam_lingbot import validate_assets
+        try:
+            validate_assets(args.checkpoint, args.source_root, args.processor)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            parser.error(str(exc))
     return args
 
 
@@ -217,6 +228,13 @@ def main(argv=None):
         runtime = model_loading.MolmoRuntime(args.checkpoint, device=args.device, num_steps=args.num_steps,
                                             dtype=args.dtype, patch_bf16=args.patch_molmo_bf16, robot_type=args.robot_type)
         # Single-threaded HTTP server serializes calls to the model, like the deployed lock.
+        with HTTPServer((args.host, args.port), http_handler(runtime)) as server:
+            server.serve_forever()
+    elif args.model == "lingbot_v2":
+        from .yam_lingbot import LingBotYAMRuntime
+        runtime = LingBotYAMRuntime(args.checkpoint, source_root=args.source_root,
+                                    processor=args.processor, device=args.device, dtype=args.dtype,
+                                    use_compile=args.lingbot_compile)
         with HTTPServer((args.host, args.port), http_handler(runtime)) as server:
             server.serve_forever()
     elif args.model == "pi05_lerobot":

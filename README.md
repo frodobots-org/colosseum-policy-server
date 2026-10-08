@@ -44,6 +44,9 @@ For NUSMAGIC pi05-MolmoAct2-YAM, use the
 For RoboColosseum G05 YAM, see the [bridge setup and training metadata](docs/yam.md#g05-yam)
 and [runtime configuration](configs/local-runtime-yam-g05.yaml.example).
 
+For LingBot-VLA v2 YAM, see the [worker setup](docs/lingbot-yam.md) and
+[launcher configuration](configs/local-runtime-yam-lingbot.yaml.example).
+
 ### Run a Real Robot Policy Server
 
 Install the DROID and LLM adapters once:
