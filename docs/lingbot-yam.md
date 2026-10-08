@@ -101,9 +101,10 @@ colosseum-policy-local --config configs/local-runtime-yam-lingbot.yaml
 
 The launcher activates the worker when a matching session is prepared.
 
-LingBot output validation clips finite gripper endpoint overshoot of at most
-`1e-6` (normalized opening units) to `[0, 1]`, logging the original value, side
-and action index. Larger violations and nonfinite outputs still fail. Arm
+LingBot output validation clips all finite gripper targets to `[0, 1]`
+(normalized opening units), logging each clipped original value, side and
+action index. For example, `1.003670` becomes `1.0`. Nonfinite outputs and
+incorrect action shapes still fail. Arm
 targets and input-state validation are unchanged; this is not a change to
 Client gripper calibration or motor force limits.
 

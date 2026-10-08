@@ -93,36 +93,37 @@ def test_invalid_observation_rejected(runtime, bad):
     assert 'observation' not in calls
 
 
-@pytest.mark.parametrize('bad', ['shape', 'nan', 'gripper'])
+@pytest.mark.parametrize('bad', ['shape', 'nan'])
 def test_invalid_model_output_rejected(runtime, bad):
     worker, _ = runtime
     actions = np.zeros((29 if bad == 'shape' else 30, 14))
     if bad == 'nan': actions[0, 0] = np.nan
-    if bad == 'gripper': actions[2, 13] = -.1
     worker.policy.infer = lambda _: {'action': actions}
     with pytest.raises(ValueError): worker.infer(payload())
 
 
-def test_gripper_roundoff_clipped_without_changing_arms_or_upstream(runtime, caplog):
+@pytest.mark.parametrize('low,high', [(-1e-8, np.nextafter(np.float32(1), np.float32(2))),
+                                    (-.1, 1.003670), (-10., 10.)])
+def test_grippers_clipped_without_changing_arms_or_upstream(runtime, caplog, low, high):
     worker, _ = runtime
     actions = np.tile(payload()['state'], (30, 1))
-    actions[14, 6] = -1e-8
-    actions[4, 13] = np.nextafter(np.float32(1), np.float32(2))
+    actions[14, 6] = low
+    actions[15, 13] = high
     original = actions.copy()
     actions.setflags(write=False)
     worker.policy.infer = lambda _: {'action': actions}
     result = worker.infer(payload())['actions']
     expected = original.copy()
-    expected[14, 6], expected[4, 13] = 0, 1
+    expected[14, 6], expected[15, 13] = 0, 1
     np.testing.assert_array_equal(result, expected)
     np.testing.assert_array_equal(actions, original)
     assert 'action_index=14 left_gripper target=-' in caplog.text
-    assert 'action_index=4 right_gripper' in caplog.text
+    assert 'action_index=15 right_gripper' in caplog.text
 
 
-@pytest.mark.parametrize('value', [-2e-6, 1 + 2e-6, np.nan, np.inf, -np.inf])
+@pytest.mark.parametrize('value', [np.nan, np.inf, -np.inf])
 @pytest.mark.parametrize('column', [6, 13])
-def test_real_gripper_violations_still_rejected(runtime, value, column):
+def test_nonfinite_grippers_still_rejected(runtime, value, column):
     worker, _ = runtime
     actions = np.zeros((30, 14), dtype=np.float32)
     actions[14, column] = value

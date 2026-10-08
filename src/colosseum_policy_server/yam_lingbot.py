@@ -14,7 +14,6 @@ from .model_adapters.bounds import check_bounds
 
 ROBOT = 'molmoact2_yam_abs'
 log = logging.getLogger(__name__)
-GRIPPER_ROUNDOFF_TOLERANCE = 1e-6
 
 
 @contextmanager
@@ -116,22 +115,15 @@ class LingBotYAMRuntime:
         if actions.shape != (30, 14) or not np.isfinite(actions).all():
             raise ValueError('LingBot YAM must return finite 30 x 14 absolute actions')
         grippers = actions[:, [6, 13]]
-        # Compare in float64 so the upper tolerance is not rounded up by float32.
-        precise = grippers.astype(np.float64)
-        if np.any((precise < -GRIPPER_ROUNDOFF_TOLERANCE)
-                  | (precise > 1 + GRIPPER_ROUNDOFF_TOLERANCE)):
-            check_bounds(grippers, 0, 1, ('left_gripper', 'right_gripper'),
-                         'LingBot YAM action grippers outside [0, 1]')
         outside = (grippers < 0) | (grippers > 1)
         if np.any(outside):
             actions = actions.copy()  # Do not mutate upstream's cached action chunk.
             for row, side in zip(*np.nonzero(outside)):
                 original = float(grippers[row, side])
                 clipped = float(np.clip(original, 0, 1))
-                log.warning('LingBot YAM gripper roundoff clipped: action_index=%d %s_gripper '
-                            'target=%.9g clipped=%.9g tolerance=%.9g',
-                            row, ('left', 'right')[side], original, clipped,
-                            GRIPPER_ROUNDOFF_TOLERANCE)
+                log.warning('LingBot YAM gripper clipped: action_index=%d %s_gripper '
+                            'target=%.9g clipped=%.9g',
+                            row, ('left', 'right')[side], original, clipped)
             actions[:, [6, 13]] = np.clip(grippers, 0, 1)
         check_bounds(actions[:, [6, 13]], 0, 1, ('left_gripper', 'right_gripper'),
                      'LingBot YAM action grippers outside [0, 1]')
