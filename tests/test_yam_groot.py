@@ -62,6 +62,20 @@ def test_saved_processors_and_absolute_chunk(runtime):
         np.testing.assert_allclose(calls['batch'][key], i*50/255)
     assert calls['batch']['task'] == 'pick'
     assert calls['processors']['preprocessor_overrides']['groot_n1_7_vlm_encode_v1']['model_name'] == str(path)
+    assert 'groot_n1_7_pack_inputs_v1' not in calls['processors']['preprocessor_overrides']
+
+
+def test_explicit_top_left_right_override_preserves_actions(runtime):
+    _, calls, path = runtime
+    original_config = (path / 'config.json').read_bytes()
+    worker = GrootYAMRuntime(path, base_model=path, processor=path, camera_order='top-left-right')
+    assert calls['processors']['preprocessor_overrides']['groot_n1_7_pack_inputs_v1'] == {
+        'video_modality_keys': ['top', 'left', 'right']}
+    result = worker.infer(payload())
+    np.testing.assert_array_equal(result['actions'], np.tile(payload()['state'], (16, 1)))
+    assert (path / 'config.json').read_bytes() == original_config
+    with pytest.raises(ValueError, match='camera_order'):
+        GrootYAMRuntime(path, base_model=path, processor=path, camera_order='wrong')
 
 
 @pytest.mark.parametrize('bad', ['width','nan','gripper'])
@@ -89,11 +103,15 @@ def test_yam_groot_cli_requires_local_assets(tmp_path):
     assert parse_args(args+['--base-model',str(tmp_path)]).robot_type=='yam'
 
 
-def test_cli_dispatches_yam_to_http_not_native_groot(runtime, monkeypatch):
+@pytest.mark.parametrize('camera_order', ['checkpoint', 'top-left-right'])
+def test_cli_dispatches_yam_to_http_not_native_groot(runtime, monkeypatch, camera_order):
     from colosseum_policy_server import model_service as service, yam_groot
     worker, _, path = runtime
     calls = []
-    monkeypatch.setattr(yam_groot, 'GrootYAMRuntime', lambda *a, **k: worker)
+    def create(*args, **kwargs):
+        assert kwargs['camera_order'] == camera_order
+        return worker
+    monkeypatch.setattr(yam_groot, 'GrootYAMRuntime', create)
     class Server:
         def __init__(self, address, handler): assert address == ('127.0.0.1', 8203)
         def __enter__(self): return self
@@ -101,5 +119,12 @@ def test_cli_dispatches_yam_to_http_not_native_groot(runtime, monkeypatch):
         def serve_forever(self): calls.append('http')
     monkeypatch.setattr(service, 'HTTPServer', Server)
     service.main(['groot_n17','--robot-type','yam','--checkpoint',str(path),
-                  '--processor',str(path),'--base-model',str(path),'--port','8203'])
+                  '--processor',str(path),'--base-model',str(path),'--port','8203',
+                  '--groot-camera-order',camera_order])
     assert calls == ['http']
+
+
+def test_camera_override_rejected_for_other_workers(tmp_path):
+    with pytest.raises(SystemExit):
+        parse_args(['molmoact2', '--robot-type', 'yam', '--checkpoint', str(tmp_path),
+                    '--port', '8202', '--groot-camera-order', 'top-left-right'])

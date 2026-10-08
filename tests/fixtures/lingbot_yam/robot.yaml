@@ -1,0 +1,53 @@
+# MolmoAct2-BimanualYAM (allenai/MolmoAct2-BimanualYAM-Dataset), LeRobot v3.0, 30 fps, robot_type bi_yam_follower.
+# Variant matching the MolmoAct2-BimanualYAM fine-tuning recipe (absolute actions).
+# Raw 14-D state/action layout: [left_joint_0..5, left_gripper, right_joint_0..5, right_gripper] (absolute joint pos).
+states:
+  - observation.state.arm.position:
+      origin_keys:
+        - observation.state:       # left arm joints [0:6)
+            start: 0
+            end: 6
+        - observation.state:       # right arm joints [7:13)
+            start: 7
+            end: 13
+
+  - observation.state.effector.position:
+      origin_keys:
+        - observation.state:       # left gripper [6:7)
+            start: 6
+            end: 7
+        - observation.state:       # right gripper [13:14)
+            start: 13
+            end: 14
+
+actions:
+  # MolmoAct2 paper recipe: absolute joint-pose actions for arms and grippers.
+  - action.arm.position:
+      origin_keys:
+        - action:
+            start: 0
+            end: 6
+        - action:
+            start: 7
+            end: 13
+      subtract_state: False
+
+  - action.effector.position:
+      origin_keys:
+        - action:
+            start: 6
+            end: 7
+        - action:
+            start: 13
+            end: 14
+      subtract_state: False
+
+images:
+  - observation.images.camera_top:
+      origin_keys: observation.images.top
+  - observation.images.camera_wrist_left:
+      origin_keys: observation.images.left
+  - observation.images.camera_wrist_right:
+      origin_keys: observation.images.right
+
+norm_stats: assets/norm_stats/molmoact2_yam_abs.json

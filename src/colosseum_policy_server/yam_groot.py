@@ -4,6 +4,7 @@ Loads local assets only. Use the checkpoint's saved pre/post processors so camer
 packing, normalization and action unnormalization match training.
 """
 import json
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -15,7 +16,9 @@ class GrootYAMRuntime:
     camera_map = dict(zip(image_keys, ('observation.images.top', 'observation.images.left',
                                      'observation.images.right')))
 
-    def __init__(self, checkpoint, *, base_model, processor, device='cuda'):
+    def __init__(self, checkpoint, *, base_model, processor, device='cuda', camera_order='checkpoint'):
+        if camera_order not in {'checkpoint', 'top-left-right'}:
+            raise ValueError('camera_order must be checkpoint or top-left-right')
         import torch
         from lerobot.policies.groot.configuration_groot import GrootConfig
         from lerobot.policies.groot.modeling_groot import GrootPolicy
@@ -38,11 +41,15 @@ class GrootYAMRuntime:
         config.base_model_path = str(Path(base_model).resolve())
         self.policy = GrootPolicy.from_pretrained(str(checkpoint), config=config,
                                                  local_files_only=True).to(device).eval()
+        overrides = {
+            'groot_n1_7_vlm_encode_v1': {'model_name': str(Path(processor).resolve()), 'device': device},
+            'device_processor': {'device': device}}
+        if camera_order == 'top-left-right':
+            overrides['groot_n1_7_pack_inputs_v1'] = {'video_modality_keys': ['top', 'left', 'right']}
         self.pre, self.post = make_pre_post_processors(config, pretrained_path=str(checkpoint),
-            preprocessor_overrides={
-                'groot_n1_7_vlm_encode_v1': {'model_name': str(Path(processor).resolve()), 'device': device},
-                'device_processor': {'device': device}},
+            preprocessor_overrides=overrides,
             postprocessor_overrides={'device_processor': {'device': 'cpu'}})
+        logging.getLogger(__name__).info('GR00T YAM camera order mode: %s', camera_order)
 
     def infer(self, payload):
         state = np.asarray(payload['state'], dtype=np.float32)

@@ -33,8 +33,20 @@ is performed.
 
 For MolmoAct2-BimanualYAM, follow the [YAM setup guide](docs/yam.md) and
 use [the YAM runtime example](configs/local-runtime-yam.yaml.example).
+For MolmoAct2 vs LeRobot GR00T YAM, use the
+[two-model configuration](configs/local-runtime-yam-vla-pair.yaml.example) and
+[deployment guide](docs/yam.md#molmoact2-vs-gr00t-yam-deployment).
 For YAM with Grok 4.7, Opus 5.5 or GPT-6 Astra, use the
 [YAM Inspect Agent example](configs/local-runtime-yam-agent.yaml.example).
+For NUSMAGIC pi05-MolmoAct2-YAM, use the
+[pi05 YAM configuration](configs/local-runtime-yam-pi05.yaml.example) and
+[worker setup](docs/yam.md#pi05-yam).
+For RoboColosseum G05 YAM, see the [bridge setup and training metadata](docs/yam.md#g05-yam)
+and [runtime configuration](configs/local-runtime-yam-g05.yaml.example).
+
+For LingBot-VLA v2 YAM, see the [worker setup](docs/lingbot-yam.md) and
+[launcher configuration](configs/local-runtime-yam-lingbot.yaml.example).
+
 For the SO-ARM101 generalist checkpoints, follow the [SO101 setup guide](docs/so101.md)
 and use [the SO101 runtime example](configs/local-runtime-so101.yaml.example).
 

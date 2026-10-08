@@ -13,6 +13,22 @@ loopback host. It reports startup, timeout, inference, and action-validation
 failures through stable Local Protocol `ERROR` codes without exposing backend
 paths or environment details.
 
+After model readiness, the runtime waits for the first observation without an
+application idle deadline so operator confirmation and hardware initialization
+can finish. Session close, disconnect and cancellation still end this wait; a
+connected prepared client retains the session until it sends an observation or
+closes. After each returned action chunk, the runtime waits up to 90 seconds
+for the next observation. This execution idle limit is separate from the model's
+per-request inference deadline. Expiry returns `OBSERVATION_TIMEOUT`, with the
+expected sequence, and prints an `observation_timeout` JSON event to the server
+terminal. Restarting a process does not change this timeout.
+
+Malformed frames/payloads and invalid type, session, sequence or deadline return
+`INVALID_REQUEST` with a specific reason. The `observation_rejected` event records
+the decoding/validation stage and safe frame metadata, without image bytes or
+credentials. These diagnostics are in the Policy Server output, not necessarily
+the launcher's model-worker log.
+
 ## DROID Model Workers
 
 Install `colosseum-policy-server[droid]` to enable the built-in `droid`
