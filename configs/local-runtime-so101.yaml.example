@@ -49,3 +49,16 @@ models:
                g05, --robot-type, so101, --source-root, /path/to/GalaxeaVLA,
                --checkpoint, /path/to/g05-snapshot/g05-so101/checkpoints/model_state_dict.pt,
                --device, cuda, --action-steps, "30", --port, "9204"]
+  # max_horizon is the model's chunk length; confirm it against the Router registration.
+  - name: groot-n17-so101
+    url: https://huggingface.co/hqfang/groot-so100_101
+    revision: "f5e17af8948a647e4c23186a27927bf73d6d784e"
+    action_space: joint_position
+    action_dim: 6
+    control_hz: 30
+    max_horizon: 40
+    endpoint: http://127.0.0.1:9217
+    backend_options: {robot_type: so101, adapter: groot_so101}
+    launcher: [/path/to/groot-env/bin/python, -m, colosseum_policy_server.model_service,
+               groot_n17, --robot-type, so101, --checkpoint, /path/to/groot-so100_101-snapshot,
+               --base-model, /path/to/GR00T-N1.7-3B-snapshot, --device, cuda, --port, "9217"]

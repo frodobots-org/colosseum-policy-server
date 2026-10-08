@@ -24,12 +24,12 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("model", choices=["molmoact2", "pi05_lerobot", "groot_n17", "lap_3b", "g05"])
     parser.add_argument("--robot-type", choices=["franka", "yam", "so101"], default="franka",
-                        help="embodiment (default: franka); yam: molmoact2/groot_n17, so101: molmoact2/pi05_lerobot/g05")
+                        help="embodiment (default: franka); yam: molmoact2/groot_n17, so101: molmoact2/pi05_lerobot/groot_n17/g05")
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--tokenizer", type=Path)
     parser.add_argument("--stats", type=Path)
     parser.add_argument("--processor", type=Path)
-    parser.add_argument("--base-model", type=Path, help="local GR00T N1.7 base snapshot for LeRobot YAM")
+    parser.add_argument("--base-model", type=Path, help="local GR00T N1.7 base snapshot for LeRobot YAM/SO101")
     parser.add_argument("--source-root", type=Path, help="installed G05 upstream source checkout")
     parser.add_argument("--host", default="127.0.0.1", choices=["127.0.0.1", "localhost"])
     parser.add_argument("--port", type=int, required=True)
@@ -48,8 +48,8 @@ def parse_args(argv=None):
         parser.error("port must be valid and --num-steps must be in [1, 10]")
     if args.robot_type == "yam" and args.model not in {"molmoact2", "groot_n17"}:
         parser.error("--robot-type yam is implemented only for molmoact2 and groot_n17")
-    if args.robot_type == "so101" and args.model not in {"molmoact2", "pi05_lerobot", "g05"}:
-        parser.error("--robot-type so101 is implemented only for molmoact2, pi05_lerobot and g05")
+    if args.robot_type == "so101" and args.model not in {"molmoact2", "pi05_lerobot", "groot_n17", "g05"}:
+        parser.error("--robot-type so101 is implemented only for molmoact2, pi05_lerobot, groot_n17 and g05")
     if not 1 <= args.action_steps <= 64 or any("=" not in item for item in args.g05_override):
         parser.error("--action-steps must be in [1, 64] and --g05-override must be KEY=VALUE")
     required = {"molmoact2": [], "pi05_lerobot": ["tokenizer", "stats"],
@@ -58,6 +58,8 @@ def parse_args(argv=None):
         required["pi05_lerobot"] = []  # tokenizer and statistics are bundled with the checkpoint
     if args.model == "groot_n17" and args.robot_type == "yam":
         required["groot_n17"] = ["processor", "base_model"]
+    if args.model == "groot_n17" and args.robot_type == "so101":
+        required["groot_n17"] = ["base_model"]  # the VLM processor is bundled with the checkpoint
     for key in ["checkpoint", *required[args.model]]:
         path = getattr(args, key)
         if path is None or not path.exists():
@@ -75,9 +77,9 @@ def parse_args(argv=None):
         parser.error("LAP --tokenizer must be the tokenizer.model file")
     if args.model == "pi05_lerobot" and args.robot_type != "so101" and (not args.tokenizer.is_dir() or not args.stats.is_file()):
         parser.error("pi05 needs a tokenizer directory and a statistics JSON file")
-    if args.model == "groot_n17" and not args.processor.is_dir():
+    if args.model == "groot_n17" and args.robot_type != "so101" and not args.processor.is_dir():
         parser.error("GR00T --processor must be a local processor directory")
-    if args.model == "groot_n17" and args.robot_type == "yam" and not args.base_model.is_dir():
+    if args.model == "groot_n17" and args.robot_type in {"yam", "so101"} and not args.base_model.is_dir():
         parser.error("--base-model must be a local directory")
     return args
 
@@ -225,6 +227,12 @@ def main(argv=None):
             from .yam_groot import GrootYAMRuntime
             runtime = GrootYAMRuntime(args.checkpoint, base_model=args.base_model,
                                       processor=args.processor, device=args.device)
+            with HTTPServer((args.host, args.port), http_handler(runtime)) as server:
+                server.serve_forever()
+            return
+        if args.robot_type == "so101":
+            from .so101_groot import GrootSO101Runtime
+            runtime = GrootSO101Runtime(args.checkpoint, base_model=args.base_model, device=args.device)
             with HTTPServer((args.host, args.port), http_handler(runtime)) as server:
                 server.serve_forever()
             return

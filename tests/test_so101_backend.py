@@ -56,7 +56,8 @@ def worker():
         server.server_close()
 
 
-@pytest.mark.parametrize('adapter,horizon,expected', [('molmoact2_so101', 30, 30), ('pi05_so101', 50, 30)])
+@pytest.mark.parametrize('adapter,horizon,expected', [('molmoact2_so101', 30, 30), ('pi05_so101', 50, 30),
+                                                      ('groot_so101', 40, 30)])
 async def test_http_roundtrip_routing_and_chunk_truncation(worker, adapter, horizon, expected):
     backend = VLABackend({})
     item = model(adapter, worker(horizon))
@@ -169,9 +170,12 @@ def test_worker_cli_accepts_so101_only_for_supported_models(tmp_path):
     base = ['--checkpoint', str(tmp_path), '--port', '9100', '--robot-type', 'so101']
     assert parse_args(['molmoact2', *base]).robot_type == 'so101'
     assert parse_args(['pi05_lerobot', *base]).tokenizer is None
-    for name in ('groot_n17', 'lap_3b'):
-        with pytest.raises(SystemExit):
-            parse_args([name, *base, '--processor', str(tmp_path), '--tokenizer', str(tmp_path)])
+    # GR00T's VLM processor is bundled with the checkpoint; only the base snapshot is separate.
+    assert parse_args(['groot_n17', *base, '--base-model', str(tmp_path)]).processor is None
+    with pytest.raises(SystemExit):
+        parse_args(['groot_n17', *base])
+    with pytest.raises(SystemExit):
+        parse_args(['lap_3b', *base, '--tokenizer', str(tmp_path)])
     with pytest.raises(SystemExit):
         parse_args(['molmoact2', *base, '--g05-override', 'no-equals'])
 
