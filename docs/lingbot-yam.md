@@ -99,8 +99,15 @@ Stop the manually started worker before using the automatic launcher.
 colosseum-policy-local --config configs/local-runtime-yam-lingbot.yaml
 ```
 
-The launcher activates the worker when a matching session is prepared. Local
-contract tests use a fake upstream policy and cover state/camera mapping, absolute
+The launcher activates the worker when a matching session is prepared.
+
+LingBot output validation clips finite gripper endpoint overshoot of at most
+`1e-6` (normalized opening units) to `[0, 1]`, logging the original value, side
+and action index. Larger violations and nonfinite outputs still fail. Arm
+targets and input-state validation are unchanged; this is not a change to
+Client gripper calibration or motor force limits.
+
+Local contract tests use a fake upstream policy and cover state/camera mapping, absolute
 actions, validation and protocol routing. They do not establish CUDA compatibility,
 real-checkpoint inference, thermal safety or robot task performance. This is an
 intermediate 40K-step checkpoint; its model card reports no robot evaluation.
