@@ -47,6 +47,9 @@ and [runtime configuration](configs/local-runtime-yam-g05.yaml.example).
 For LingBot-VLA v2 YAM, see the [worker setup](docs/lingbot-yam.md) and
 [launcher configuration](configs/local-runtime-yam-lingbot.yaml.example).
 
+For the SO-ARM101 generalist checkpoints, follow the [SO101 setup guide](docs/so101.md)
+and use [the SO101 runtime example](configs/local-runtime-so101.yaml.example).
+
 ### Run a Real Robot Policy Server
 
 Install the DROID and LLM adapters once:

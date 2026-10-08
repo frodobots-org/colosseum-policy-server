@@ -23,13 +23,13 @@ MAX_REQUEST_BYTES = 32 * 1024 * 1024
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("model", choices=["molmoact2", "pi05_lerobot", "groot_n17", "lap_3b", "g05", "lingbot_v2"])
-    parser.add_argument("--robot-type", choices=["franka", "yam"], default="franka",
-                        help="MolmoAct2/GR00T/pi05 embodiment (default: franka)")
+    parser.add_argument("--robot-type", choices=["franka", "yam", "so101"], default="franka",
+                        help="embodiment (default: franka); so101: molmoact2/pi05_lerobot/groot_n17/g05")
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--tokenizer", type=Path)
     parser.add_argument("--stats", type=Path)
     parser.add_argument("--processor", type=Path)
-    parser.add_argument("--base-model", type=Path, help="local GR00T N1.7 base snapshot for LeRobot YAM")
+    parser.add_argument("--base-model", type=Path, help="local GR00T N1.7 base snapshot for LeRobot YAM/SO101")
     parser.add_argument("--groot-camera-order", choices=["checkpoint", "top-left-right"], default="checkpoint",
                         help="GR00T YAM camera packing; top-left-right is an experimental override")
     parser.add_argument("--source-root", type=Path, help="installed G05 or LingBot upstream source checkout")
@@ -43,6 +43,10 @@ def parse_args(argv=None):
                         help="back up and patch the selected Molmo model source with deployed dtype fixes")
     parser.add_argument("--g05-native-attention", action="store_true", help="disable deployed G05 SDPA override")
     parser.add_argument("--lingbot-compile", action="store_true", help="enable optional LingBot torch.compile")
+    parser.add_argument("--action-steps", type=int, default=30,
+                        help="G05 SO101 steps served per inference; match the registered max_horizon")
+    parser.add_argument("--g05-override", action="append", default=[], metavar="KEY=VALUE",
+                        help="extra upstream G05 Hydra override for SO101 (repeatable)")
     args = parser.parse_args(argv)
     if args.model == "lingbot_v2" and args.robot_type != "yam":
         parser.error("lingbot_v2 currently supports --robot-type yam only")
@@ -52,8 +56,12 @@ def parse_args(argv=None):
         parser.error("--groot-camera-order top-left-right requires groot_n17 --robot-type yam")
     if not 1 <= args.port <= 65535 or not 1 <= args.num_steps <= 10:
         parser.error("port must be valid and --num-steps must be in [1, 10]")
-    if args.robot_type != "franka" and args.model not in {"molmoact2", "groot_n17", "pi05_lerobot", "g05", "lingbot_v2"}:
+    if args.robot_type == "yam" and args.model not in {"molmoact2", "groot_n17", "pi05_lerobot", "g05", "lingbot_v2"}:
         parser.error("--robot-type yam is implemented only for molmoact2, groot_n17, pi05_lerobot, g05 and lingbot_v2")
+    if args.robot_type == "so101" and args.model not in {"molmoact2", "pi05_lerobot", "groot_n17", "g05"}:
+        parser.error("--robot-type so101 is implemented only for molmoact2, pi05_lerobot, groot_n17 and g05")
+    if not 1 <= args.action_steps <= 64 or any("=" not in item for item in args.g05_override):
+        parser.error("--action-steps must be in [1, 64] and --g05-override must be KEY=VALUE")
     if args.g05_parts_meta is not None and (args.model != "g05" or args.robot_type != "yam"):
         parser.error("--g05-parts-meta requires g05 --robot-type yam")
     required = {"molmoact2": [], "pi05_lerobot": ["tokenizer", "stats"],
@@ -62,6 +70,10 @@ def parse_args(argv=None):
         required["groot_n17"] = ["processor", "base_model"]
     if args.model == "g05" and args.robot_type == "yam":
         required["g05"] = ["source_root", "processor"]
+    if args.model == "pi05_lerobot" and args.robot_type == "so101":
+        required["pi05_lerobot"] = []  # tokenizer and statistics are bundled with the checkpoint
+    if args.model == "groot_n17" and args.robot_type == "so101":
+        required["groot_n17"] = ["base_model"]  # the VLM processor is bundled with the checkpoint
     if args.model == "pi05_lerobot" and args.robot_type == "yam":
         required["pi05_lerobot"] = ["tokenizer"]
         if args.stats is not None:
@@ -87,13 +99,13 @@ def parse_args(argv=None):
         parser.error("--checkpoint must be a local directory")
     if args.model == "lap_3b" and not args.tokenizer.is_file():
         parser.error("LAP --tokenizer must be the tokenizer.model file")
-    if args.model == "pi05_lerobot" and not args.tokenizer.is_dir():
+    if args.model == "pi05_lerobot" and args.robot_type != "so101" and not args.tokenizer.is_dir():
         parser.error("pi05 needs a local tokenizer directory")
     if args.model == "pi05_lerobot" and args.robot_type == "franka" and not args.stats.is_file():
         parser.error("pi05 needs a tokenizer directory and a statistics JSON file")
-    if args.model == "groot_n17" and not args.processor.is_dir():
+    if args.model == "groot_n17" and args.robot_type != "so101" and not args.processor.is_dir():
         parser.error("GR00T --processor must be a local processor directory")
-    if args.model == "groot_n17" and args.robot_type == "yam" and not args.base_model.is_dir():
+    if args.model == "groot_n17" and args.robot_type in {"yam", "so101"} and not args.base_model.is_dir():
         parser.error("--base-model must be a local directory")
     if args.model == "lingbot_v2":
         from .yam_lingbot import validate_assets
@@ -211,6 +223,9 @@ def run_g05(args):
         os.chdir(args.source_root)
         sys.argv = [str(script), "--ckpt_path", str(args.checkpoint), "--host", args.host,
                     "--port", str(args.port), "--device", args.device]
+        if getattr(args, "robot_type", "franka") == "so101":
+            # The SO100/101 run serves chunks; its upstream embodiment name is so100.
+            sys.argv += ["--action_steps", str(args.action_steps), "eval_embodiment=so100", *args.g05_override]
         runpy.run_path(str(script), run_name="__main__")
     finally:
         sys.argv = previous_argv
@@ -245,6 +260,12 @@ def main(argv=None):
             with HTTPServer((args.host, args.port), http_handler(runtime)) as server:
                 server.serve_forever()
             return
+        if args.robot_type == "so101":
+            from .so101_pi05 import Pi05SO101Runtime
+            runtime = Pi05SO101Runtime(args.checkpoint, device=args.device, num_steps=args.num_steps)
+            with HTTPServer((args.host, args.port), http_handler(runtime)) as server:
+                server.serve_forever()
+            return
         runtime = model_loading.Pi05Runtime(args.checkpoint, args.tokenizer, args.stats,
                                            device=args.device, num_steps=args.num_steps)
         asyncio.run(serve_pi05(runtime, args.host, args.port, args.num_steps))
@@ -254,6 +275,12 @@ def main(argv=None):
             runtime = GrootYAMRuntime(args.checkpoint, base_model=args.base_model,
                                       processor=args.processor, device=args.device,
                                       camera_order=args.groot_camera_order)
+            with HTTPServer((args.host, args.port), http_handler(runtime)) as server:
+                server.serve_forever()
+            return
+        if args.robot_type == "so101":
+            from .so101_groot import GrootSO101Runtime
+            runtime = GrootSO101Runtime(args.checkpoint, base_model=args.base_model, device=args.device)
             with HTTPServer((args.host, args.port), http_handler(runtime)) as server:
                 server.serve_forever()
             return
