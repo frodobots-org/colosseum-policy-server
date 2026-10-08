@@ -96,6 +96,7 @@ class LocalServiceSupervisor:
 
 class LocalPolicyRuntime:
     progress_interval = 10.0
+    observation_timeout_seconds = 90
 
     @staticmethod
     def _progress(event, run_id, model, **details):
@@ -182,12 +183,45 @@ class LocalPolicyRuntime:
     async def _serve(self, ws, run_id: str, model: LocalModel) -> None:
         sequence = 1
         while True:
+            started = time.monotonic()
+            stage = 'receive'
+            reason = 'Could not receive local observation'
+            details = {'expected_sequence': sequence}
             try:
-                frame = pb.RelayFrame.FromString(await asyncio.wait_for(ws.recv(), 90))
+                raw = await asyncio.wait_for(ws.recv(), self.observation_timeout_seconds)
+                stage = 'decode_frame'
+                reason = 'Malformed local observation frame'
+                frame = pb.RelayFrame.FromString(raw)
                 if frame.type == pb.SESSION_CLOSE and frame.session_id == run_id: return
-                if frame.type != pb.OBSERVATION or frame.session_id != run_id or frame.sequence != sequence or frame.deadline_ms < 1: raise ValueError("invalid observation")
+                stage = 'validate_frame'
+                details.update(received_type=frame.type, received_sequence=frame.sequence,
+                               deadline_ms=frame.deadline_ms, session_matches=frame.session_id == run_id)
+                violations = []
+                if frame.type != pb.OBSERVATION: violations.append('expected OBSERVATION frame')
+                if frame.session_id != run_id: violations.append('session mismatch')
+                if frame.sequence != sequence:
+                    violations.append(f'sequence mismatch: expected {sequence}, received {frame.sequence}')
+                if frame.deadline_ms < 1: violations.append('deadline_ms must be positive')
+                reason = 'Invalid local observation: ' + '; '.join(violations)
+                if violations: raise ValueError(reason)
+                stage = 'decode_observation'
+                reason = 'Malformed local observation payload'
                 observation = pb.Observation.FromString(frame.payload)
-            except Exception: await self._error(ws, run_id, "INVALID_REQUEST", "Invalid local policy request"); return
+            except asyncio.TimeoutError:
+                self._progress('observation_timeout', run_id, model, **details,
+                               timeout_s=self.observation_timeout_seconds,
+                               elapsed_s=round(time.monotonic() - started, 2))
+                await self._error(ws, run_id, 'OBSERVATION_TIMEOUT',
+                                  f'No observation received within {self.observation_timeout_seconds:g}s; '
+                                  f'waiting for sequence {sequence}. This is not a model inference timeout.')
+                return
+            except Exception as exc:
+                # Log protocol metadata, never images, observation bytes or credentials.
+                self._progress('observation_rejected', run_id, model, **details,
+                               stage=stage, error_type=type(exc).__name__, reason=reason,
+                               elapsed_s=round(time.monotonic() - started, 2))
+                await self._error(ws, run_id, 'INVALID_REQUEST', reason)
+                return
             try: actions = np.asarray(await self._infer_with_progress(run_id, model, observation, frame.deadline_ms), dtype=np.float32)
             except asyncio.TimeoutError: await self._error(ws, run_id, "INFERENCE_TIMEOUT", "Local inference exceeded its deadline"); return
             except PolicyStopped as exc:
