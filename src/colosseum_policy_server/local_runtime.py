@@ -188,7 +188,13 @@ class LocalPolicyRuntime:
             reason = 'Could not receive local observation'
             details = {'expected_sequence': sequence}
             try:
-                raw = await asyncio.wait_for(ws.recv(), self.observation_timeout_seconds)
+                # Readiness precedes operator approval and hardware construction.
+                # Do not expire a prepared connection while the Client is still
+                # setting up. recv() still ends on disconnect/cancellation.
+                if sequence == 1:
+                    raw = await ws.recv()
+                else:
+                    raw = await asyncio.wait_for(ws.recv(), self.observation_timeout_seconds)
                 stage = 'decode_frame'
                 reason = 'Malformed local observation frame'
                 frame = pb.RelayFrame.FromString(raw)

@@ -80,18 +80,56 @@ async def test_inference_failures_are_stable(tmp_path, backend, code):
 async def test_observation_idle_timeout_is_not_invalid_request(tmp_path, capsys):
     class IdleSocket(Socket):
         async def recv(self):
+            if self.messages:
+                return await super().recv()
             await asyncio.Event().wait()
-    ws = IdleSocket([])
-    runtime = LocalPolicyRuntime(config(tmp_path), Backend())
+    ws = IdleSocket([observation()])
+    runtime = LocalPolicyRuntime(config(tmp_path), Backend(result=np.zeros((1, 8))))
     runtime.observation_timeout_seconds = .01
     await runtime._serve(ws, 'run', model())
     error = pb.Error.FromString(pb.RelayFrame.FromString(ws.sent[-1]).payload)
     assert error.code == 'OBSERVATION_TIMEOUT'
-    assert 'waiting for sequence 1' in error.message
+    assert 'waiting for sequence 2' in error.message
     assert 'not a model inference timeout' in error.message
-    event = json.loads(capsys.readouterr().out)
+    event = json.loads(capsys.readouterr().out.splitlines()[-1])
     assert event['event'] == 'observation_timeout'
-    assert event['expected_sequence'] == 1
+    assert event['expected_sequence'] == 2
+
+
+async def test_first_observation_can_arrive_after_execution_idle_timeout(tmp_path):
+    close = pb.RelayFrame(type=pb.SESSION_CLOSE, session_id='run').SerializeToString()
+    class SlowStartupSocket(Socket):
+        async def recv(self):
+            if len(self.messages) == 2:
+                await asyncio.sleep(.03)  # Operator approval + hardware startup.
+            return await super().recv()
+    ws = SlowStartupSocket([observation(), close])
+    runtime = LocalPolicyRuntime(config(tmp_path), Backend(result=np.zeros((1, 8))))
+    runtime.observation_timeout_seconds = .005
+    await asyncio.wait_for(runtime._serve(ws, 'run', model()), 1)
+    assert len(ws.sent) == 1
+    assert pb.RelayFrame.FromString(ws.sent[0]).type == pb.ACTION_PLAN
+
+
+async def test_prepared_session_can_close_without_first_observation(tmp_path):
+    ws = Socket([pb.RelayFrame(type=pb.SESSION_CLOSE, session_id='run').SerializeToString()])
+    await LocalPolicyRuntime(config(tmp_path), Backend())._serve(ws, 'run', model())
+    assert ws.sent == []
+
+
+async def test_prepared_observation_wait_is_cancellable(tmp_path):
+    entered = asyncio.Event()
+    class WaitingSocket(Socket):
+        async def recv(self):
+            entered.set()
+            await asyncio.Event().wait()
+    ws = WaitingSocket([])
+    task = asyncio.create_task(LocalPolicyRuntime(config(tmp_path), Backend())._serve(ws, 'run', model()))
+    await asyncio.wait_for(entered.wait(), 1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert ws.sent == []
 
 
 @pytest.mark.parametrize('field,value,reason', [
