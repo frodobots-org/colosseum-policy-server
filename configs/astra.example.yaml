@@ -1,0 +1,12 @@
+# Copy outside Git and supply the policy token through the environment.
+url: ws://127.0.0.1:8765
+token: env:COLOSSEUM_POLICY_TOKEN
+# Set the exact identifier enabled for your API account; recorded with each run.
+model: gpt-6-astra
+controller:
+  linear: 0.15
+  angular: 0.25
+  metres_per_command_second: 1.538
+  turn_tolerance_deg: 8.0
+  move_timeout_s: 20.0
+  heading_sign: -1

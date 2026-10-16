@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import ssl
 import time
 from dataclasses import dataclass
@@ -160,6 +161,7 @@ class AsyncColosseumPolicySDK:
         self.server_id = server_id
         self.policy_id = policy_id
         self.policy_revision = policy_revision
+        self.policy_metadata = {}
         self.action_spaces = action_spaces
         self.control_hz = control_hz
         self.max_horizon = max_horizon
@@ -264,6 +266,8 @@ class AsyncColosseumPolicySDK:
         start_step: int | None = None,
         valid_until_step: int | None = None,
         control_hz: int | None = None,
+        done: bool = False,
+        decision_metadata: dict | None = None,
     ) -> None:
         """Send an action chunk correlated with an observation returned by ``get_obs``."""
 
@@ -309,6 +313,11 @@ class AsyncColosseumPolicySDK:
         selected_control_hz = default_control_hz if control_hz is None else control_hz
         if selected_control_hz <= 0:
             raise ValueError("control_hz must be positive")
+        if not isinstance(done, bool) or (done and np.any(chunk)):
+            raise ValueError("done requires a boolean and a zero-motion action")
+        metadata_json = json.dumps(decision_metadata or {}, allow_nan=False, separators=(',', ':'))
+        if len(metadata_json.encode()) > 32768:
+            raise ValueError("Decision metadata exceeds 32 KiB")
         plan = pb.ActionPlan(
             request_sequence=source.sequence,
             plan_id=source.sequence if plan_id is None else plan_id,
@@ -316,6 +325,8 @@ class AsyncColosseumPolicySDK:
             valid_until_step=final_step,
             control_hz=selected_control_hz,
             actions=tensor_from_numpy(chunk),
+            done=done,
+            decision_metadata_json=metadata_json if decision_metadata is not None else "",
         )
         await self._send(
             self._frame(
@@ -386,6 +397,7 @@ class AsyncColosseumPolicySDK:
                 action_spaces=self.action_spaces,
                 control_hz=self.control_hz,
                 max_horizon=self.max_horizon,
+                policy_metadata_json=json.dumps(self.policy_metadata, allow_nan=False) if self.policy_metadata else '',
             )
             await self._send(self._frame(pb.SESSION_READY, metadata, session_id=self.session_id))
         elif frame.type == pb.OBSERVATION and frame.session_id == self.session_id:

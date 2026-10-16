@@ -90,6 +90,7 @@ message SessionReady {
   repeated string action_spaces = 3;
   uint32 control_hz = 4;
   uint32 max_horizon = 5;
+  string policy_metadata_json = 6;
 }
 
 message Tensor {
@@ -122,6 +123,8 @@ message ActionPlan {
   uint64 valid_until_step = 4;
   uint32 control_hz = 5;
   Tensor actions = 6;
+  bool done = 7;
+  string decision_metadata_json = 8;
 }
 
 message ResetRequest {
