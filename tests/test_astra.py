@@ -7,7 +7,9 @@ import time
 
 import numpy as np
 import pytest
-from PIL import Image
+
+Image = pytest.importorskip('PIL.Image')
+pytest.importorskip('requests')
 
 from colosseum_policy_server.sdk import Observation, ImageFrame
 from colosseum_policy_server.policies.astra.planner import Astra
