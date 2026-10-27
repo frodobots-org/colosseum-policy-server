@@ -256,6 +256,11 @@ commands are sent unchanged when the operator's `adapter_config.max_linear` and
 `--max-angular`. The Router is far from most rovers, so each chunk holds the
 command for `--horizon` steps (5, half a second) before the Client asks again.
 
+`baselines/genie_rover` is a complete example: GeNIE (NUS CLeAR Lab, Earth Rover
+Challenge 2025 winner) as an Earth Rovers SDK program, the Earth Rover track's
+first benchmark policy (`genie-rover`). Its README explains how commands are timed
+through the bridge.
+
 ### Start the Policy Server
 
 After implementing your model loader and inference adapter, run:
