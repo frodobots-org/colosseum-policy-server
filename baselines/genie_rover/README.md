@@ -32,6 +32,13 @@ The live system that won the challenge has not been published. These parts are r
 
 The path bank is sampled once instead of per frame. It is seeded and independent of the goal, and sampling it took 2 s per frame.
 
+## Fine-tuned on the track dataset
+
+`finetune/` fine-tunes SAM-TP on the Earth Rover track's dataset (the Wuhan level-1 drives), with labels made from
+the drives: the path the human took, detected obstacles, and the clearance the drivers kept from them. Policy
+`genie-rover-ft` runs GeNIE with that checkpoint (`--checkpoint weights/genie-samtp-wuhan-v2.pt`); `genie-rover` is
+the authors' weights, unchanged. Method, results and where the weights are: [`finetune/README.md`](finetune/README.md).
+
 ## Setup
 
 ```bash
