@@ -92,6 +92,33 @@ margin 0.77 (original 0.94, target 0.60).
 Next to the hedge wall the fine-tuned model shades the strip of paving along the curb as less drivable, and
 GeNIE's path moves away from the wall. These are offline numbers on 15 held-out drives; trials on the rover decide.
 
+## Rover trials (30 October 2026)
+
+25 scored trials of `genie-rover-ft` on Wuhan mission-1, checkpoint 1 to checkpoint 2, between 01:35 and 05:31 UTC.
+17 ran on `luke-notch-quirk` and 8 on `loop-yoda-inch`. Every trial was reset by hand from the operator page,
+watching the camera, and scored on the navigation rubric after checking its full recording.
+
+| Score | Trials | Router outcome |
+|---|---|---|
+| 4: declared done inside the 15 m checkpoint radius, no contact | 18 | success, partial 1.0 |
+| 3: reached the radius, but hit the time limit or touched the hedge curb | 4 | partial 0.75 |
+| 1: flipped on the hedge curb or the grass wall | 3 | partial 0.25 |
+
+That is 72 % full success and a mean score of 3.48. Luke: 11 of 17 at score 4. Loop: 7 of 8 at score 4.
+The zero-shot `genie-rover` has 4 trials on record (2, 2, 3, 3), too few to compare.
+
+What went wrong:
+
+- **The curb.** All three score-1 trials end the same way: the rover drifts onto the 15 cm hedge curb or the grass
+  wall, climbs it and lands on its back. A fourth flip like this happened in a run that never got a score: an
+  inference timeout cut it short, so it was aborted. Two of the score-3 trials also touched the curb.
+- **People.** In 3 trials a pedestrian walked into the path and passed 0.2 to 0.6 m from the rover at 1.2 m/s.
+  GeNIE never reacted, because each command answers an observation about 2 s old. None of these were contacts.
+- **Timeouts.** Two runs stopped at GeNIE's 170 s limit inside the checkpoint radius, after weaving with many
+  in-place turns. In one of them, two bystanders had stood in front of the rover for 20 s.
+
+Per-trial notes are kept in the operator ledger, `.local-rover-test/production/tools/ledger.jsonl`, outside git.
+
 ## Where things are
 
 - Weights: [`RoboColosseum/genie-samtp-wuhan-level-1`](https://huggingface.co/RoboColosseum/genie-samtp-wuhan-level-1)
