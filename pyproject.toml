@@ -35,6 +35,7 @@ capx = [
 droid = "colosseum_policy_server.backends.droid:create_backend"
 inspect_agent = "colosseum_policy_server.backends.inspect_agent:create_backend"
 inspect_capx = "colosseum_policy_server.backends.inspect_capx:create_backend"
+rover_agent = "colosseum_policy_server.backends.rover_agent:create_backend"
 auto = "colosseum_policy_server.backends.auto:create_backend"
 vla = "colosseum_policy_server.backends.vla:create_backend"
 

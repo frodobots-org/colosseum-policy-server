@@ -1,0 +1,70 @@
+# Earth Rover Mini+ LLM policies (docs/earth-rover-agent.md).
+# The Robot Client supplies each provider's key per trial (llm_api_keys), or
+# uses the Claude Code login for Claude (llm_account_logins: {anthropic: claude-code}).
+host: 127.0.0.1
+port: 8000
+log_dir: local-policy-logs
+backend:
+  name: auto
+  options:
+    rover:
+      robot_type: earth_rover_mini_plus
+      # Bounds on every drive command, as normalized base_velocity values. The
+      # Client's adapter_config max_linear / max_angular scale them again.
+      max_forward: 0.3      # about 1 m/s on the Wuhan rovers
+      max_reverse: 0.2
+      max_turn: 0.6         # positive turns left
+      max_seconds: 2.0      # longest single move; then the rover stops
+      settle_seconds: 0.5   # standing still before the next observation
+      arrive_m: 8           # GPS distance at which the model is told to call done
+      sensors: [front_image]   # add rear_image when the Client records it
+      image_horizon: 2      # camera frames kept in the conversation
+      effort: low
+      log_dir: agent-logs
+models:
+  # Names, URLs and revisions must match the Router registration. max_horizon
+  # must cover max_seconds + settle_seconds at 10 Hz (25 steps here).
+  - name: claude-fable-5-2
+    model_type: llm
+    url: https://api.anthropic.com/v1
+    revision: rover-v1
+    action_space: base_velocity
+    action_dim: 2
+    control_hz: 10
+    max_horizon: 30
+    endpoint: inprocess://inspect-agent
+    backend_options:
+      robot_type: earth_rover_mini_plus
+  - name: claude-opus-5-5
+    model_type: llm
+    url: https://api.anthropic.com/v1
+    revision: rover-v1
+    action_space: base_velocity
+    action_dim: 2
+    control_hz: 10
+    max_horizon: 30
+    endpoint: inprocess://inspect-agent
+    backend_options:
+      robot_type: earth_rover_mini_plus
+  - name: gpt-6-astra
+    model_type: llm
+    url: https://api.openai.com/v1
+    revision: rover-v1
+    action_space: base_velocity
+    action_dim: 2
+    control_hz: 10
+    max_horizon: 30
+    endpoint: inprocess://inspect-agent
+    backend_options:
+      robot_type: earth_rover_mini_plus
+  - name: grok-4.7
+    model_type: llm
+    url: https://api.x.ai/v1
+    revision: rover-v1
+    action_space: base_velocity
+    action_dim: 2
+    control_hz: 10
+    max_horizon: 30
+    endpoint: inprocess://inspect-agent
+    backend_options:
+      robot_type: earth_rover_mini_plus
