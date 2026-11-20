@@ -23,6 +23,18 @@ class PolicyBackend(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class PlanResult:
+    """Actions plus the policy's own end-of-task signal.
+
+    ``done`` ends the trial on the Client (ActionPlan.done). It is a request to
+    stop, not a verified success: the operator still scores the trial. A done
+    plan carries only zero actions.
+    """
+    actions: np.ndarray
+    done: bool = False
+
+
 class PolicyStopped(Exception):
     """An agent requested termination, not a verified task success."""
 

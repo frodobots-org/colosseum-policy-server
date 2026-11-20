@@ -2,6 +2,8 @@
 from .vla import VLABackend
 from .inspect_agent import InspectAgentBackend
 from .inspect_capx import InspectCapxBackend, is_capx
+from .rover_agent import RoverAgentBackend
+from ..model_adapters.robots import ROVER_ROBOT
 
 
 class AutoBackend:
@@ -11,8 +13,15 @@ class AutoBackend:
     async def start_session(self, model, request):
         if self.active is not None:
             raise RuntimeError('Previous model session has not closed')
-        shared = {key: value for key, value in self.options.items() if key not in {'llm', 'vla', 'capx'}}
-        if is_capx(model):
+        shared = {key: value for key, value in self.options.items() if key not in {'llm', 'vla', 'capx', 'rover'}}
+        llm = model.model_type == 'llm' or model.endpoint == 'inprocess://inspect-agent'
+        robot = request.get('robot_type') or model.backend_options.get('robot_type', self.options.get('robot_type'))
+        if llm and robot == ROVER_ROBOT:
+            # A rover has no joints: its LLMs drive through the rover agent, not Inspect's arm tools.
+            self.active = RoverAgentBackend(
+                {**shared, **self.options.get('llm', {}), **self.options.get('rover', {})})
+            await self.active.start_session(model, request)
+        elif is_capx(model):
             self.active = InspectCapxBackend(
                 {**shared, **self.options.get('llm', {}), **self.options.get('capx', {})})
             await self.active.start_session(model, request)

@@ -23,7 +23,7 @@ import yaml
 from . import colosseum_pb2 as pb
 from .local_protocol import decode_control, encode_control
 from .backends import LocalModel, PolicyBackend
-from .backends.base import PolicyStopped
+from .backends.base import PlanResult, PolicyStopped
 
 
 def load_backend(name: str, options: Mapping[str, Any]) -> PolicyBackend:
@@ -194,7 +194,7 @@ class LocalPolicyRuntime:
             if not isinstance(local_options, dict):
                 raise ValueError('invalid local Client options')
             request = {**request, **{key: local_options[key]
-                                   for key in ('auth_method', 'use_local_action_contract')
+                                   for key in ('auth_method', 'use_local_action_contract', 'navigation')
                                    if key in local_options}}
             run_id = request["run_id"]
             # Legacy profiles are opaque metadata; subfolder selection is deferred.
@@ -242,7 +242,9 @@ class LocalPolicyRuntime:
                     ready = {"type":"ready", "run_id":run_id, "preparation_id":request.get("preparation_id", ""),
                              "model":dict(request["model"]), "loaded":not verification_only,
                              "verification_only":verification_only,
-                             "control_mode": getattr(self.backend, "control_mode", "joint_pos"),
+                             # A mobile base has no joint mode: its actions are the velocities themselves.
+                             "control_mode": ("base_velocity" if model.action_space == "base_velocity"
+                                              else getattr(self.backend, "control_mode", "joint_pos")),
                              "internal_action_dim": getattr(self.backend, "internal_action_dim", None) or model.action_dim}
                     extra_message = {}
                     if local_eef:
@@ -310,7 +312,10 @@ class LocalPolicyRuntime:
                                elapsed_s=round(time.monotonic() - started, 2))
                 await self._error(ws, run_id, 'INVALID_REQUEST', reason)
                 return
-            try: actions = np.asarray(await self._infer_with_progress(run_id, model, observation, frame.deadline_ms), dtype=np.float32)
+            try:
+                result = await self._infer_with_progress(run_id, model, observation, frame.deadline_ms)
+                done = isinstance(result, PlanResult) and result.done
+                actions = np.asarray(result.actions if isinstance(result, PlanResult) else result, dtype=np.float32)
             except asyncio.TimeoutError: await self._error(ws, run_id, "INFERENCE_TIMEOUT", "Local inference exceeded its deadline"); return
             except PolicyStopped as exc:
                 await self._error(ws, run_id, "POLICY_STOPPED", f"Agent requested {exc.reason}; operator scoring is required")
@@ -318,5 +323,7 @@ class LocalPolicyRuntime:
             except Exception: print(traceback.format_exc(), flush=True); await self._error(ws, run_id, "INFERENCE_FAILED", "Local inference failed"); return
             internal_dim = getattr(self.backend, "internal_action_dim", None) or model.action_dim
             if actions.ndim != 2 or not 1 <= actions.shape[0] <= model.max_horizon or actions.shape[1] != internal_dim or not np.isfinite(actions).all(): await self._error(ws, run_id, "INVALID_REQUEST", "Backend returned an invalid action array"); return
-            plan = pb.ActionPlan(request_sequence=sequence, plan_id=sequence, start_step=observation.control_step, valid_until_step=observation.control_step + len(actions) - 1, control_hz=model.control_hz, actions=pb.Tensor(shape=actions.shape, dtype=pb.FLOAT32, data=actions.tobytes()))
+            # The Client rejects a done plan that would still move the robot.
+            if done and np.any(actions != 0): await self._error(ws, run_id, "INVALID_REQUEST", "A done plan must contain only zero actions"); return
+            plan = pb.ActionPlan(request_sequence=sequence, plan_id=sequence, start_step=observation.control_step, valid_until_step=observation.control_step + len(actions) - 1, control_hz=model.control_hz, actions=pb.Tensor(shape=actions.shape, dtype=pb.FLOAT32, data=actions.tobytes()), done=done)
             await ws.send(pb.RelayFrame(protocol_version=1, type=pb.ACTION_PLAN, session_id=run_id, sequence=sequence, payload=plan.SerializeToString()).SerializeToString()); sequence += 1

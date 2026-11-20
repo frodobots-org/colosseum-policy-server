@@ -4,6 +4,11 @@ from dataclasses import dataclass
 import numpy as np
 
 
+# Mobile base: two normalized base_velocity values [linear, angular] at 10 Hz,
+# +angular turns left. No joints or gripper; see backends/rover_agent.py.
+ROVER_ROBOT = 'earth_rover_mini_plus'
+
+
 def canonical_robot(value):
     if not isinstance(value, str) or not value.strip():
         raise ValueError('robot_type must be a nonempty string')
